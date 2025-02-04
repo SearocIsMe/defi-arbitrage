@@ -1,5 +1,10 @@
 import ccxt
 import time
+import os
+import random
+from gql import gql, Client
+from gql.transport.requests import RequestsHTTPTransport
+from web3 import Web3
 
 # 跨链套利配置
 DEX_CONFIG = {
@@ -19,10 +24,61 @@ DEX_CONFIG = {
     }
 }
 
+# MEV保护实现类
+class MEVProtector:
+    def __init__(self, config):
+        self.w3 = Web3(Web3.HTTPProvider(config['rpc']))
+        self.flashbots_rpc = FLASHBOTS_CONFIG['rpc']
+        self.signer_key = FLASHBOTS_CONFIG['signer_key']
+        self.account = self.w3.eth.account.from_key(self.signer_key)
+        
+        # 添加Flashbots中间件
+        self.w3.middleware_onion.add(
+            self.construct_flashbots_middleware()
+        )
+
+    def construct_flashbots_middleware(self):
+        from flashbots import construct_flashbots_middleware
+        return construct_flashbots_middleware(
+            self.w3.eth,
+            self.account
+        )
+
+    def get_optimal_gas_params(self):
+        """获取动态Gas参数"""
+        try:
+            base_fee = self.w3.eth.get_block('latest')['baseFeePerGas']
+            max_priority = self.w3.eth.max_priority_fee
+            return {
+                'maxFeePerGas': int(base_fee * 1.25),
+                'maxPriorityFeePerGas': int(max_priority * 1.2),
+                'type': '0x2'  # EIP-1559交易类型
+            }
+        except Exception as e:
+            print(f"Error getting gas params: {e}")
+            return None
+
+    def protect_transaction(self, tx):
+        """交易保护处理（防抢跑）"""
+        try:
+            # 添加随机数据防止交易哈希碰撞
+            tx['data'] += hex(random.randint(0, 0xFFFF))[2:]
+            signed_tx = self.account.sign_transaction(tx)
+            return signed_tx.rawTransaction
+        except Exception as e:
+            print(f"Transaction protection failed: {e}")
+            return None
+
+    def simulate_bundle(self, raw_tx):
+        """交易模拟检查"""
+        from flashbots import FlashbotBundle
+        bundle = FlashbotBundle([raw_tx])
+        return self.w3.flashbots.simulate_bundle(bundle)
+
 # 添加MEV保护配置
 FLASHBOTS_CONFIG = {
     'rpc': 'https://relay.flashbots.net',
-    'signer_key': 'YOUR_FLASHBOTS_SIGNER_KEY'
+    'signer_key': os.getenv('FLASHBOTS_SIGNER_KEY')  # 从环境变量读取
 }
 
 # 初始化交易参数
@@ -87,15 +143,47 @@ def detect_arbitrage_opportunity():
 
     # 检查是否有交易所的价格显著低于平均价（套利机会）
     for exchange_name, price in prices.items():
-        # 动态计算套利阈值（基础0.3% + Gas成本补偿）
-        gas_price = 30  # 默认30 Gwei
-        gas_limit = 250000  # 预估Gas消耗量
-        arbitrage_amount = 1  # 套利数量(ETH)
-        threshold = 0.003 + (gas_price * gas_limit / arbitrage_amount * 1e-9)  # 转换单位
+        # 动态获取实时Gas价格并计算成本
+        w3 = Web3(Web3.HTTPProvider(DEX_CONFIG['ethereum']['rpc']))
+        gas_price = w3.eth.gas_price / 1e9  # 转换为Gwei
+        gas_limit = 350000  # 包含跨链操作的新预估
+        arbitrage_amount = 0.5  # 降低单次套利规模
+        threshold = max(0.005, 0.002 + (gas_price * gas_limit / arbitrage_amount * 1e-9))  # 动态最低阈值
         
         if price < average_price * (1 - threshold):  
             print(f"Arbitrage opportunity detected! {exchange_name} price is below average by {(average_price - price)/average_price*100}%")
-            return True
+            
+            # 初始化MEV保护
+            mev_protector = MEVProtector(DEX_CONFIG['ethereum'])
+            
+            # 构建跨链套利交易
+            arbitrage_tx = {
+                'chainId': 1,
+                'to': DEX_CONFIG['ethereum']['bridge'],
+                'value': Web3.to_wei(0.1, 'ether'),
+                'data': '0x',
+                'gas': 350000
+            }
+            
+            # 获取最优Gas参数
+            gas_params = mev_protector.get_optimal_gas_params()
+            if gas_params:
+                arbitrage_tx.update(gas_params)
+                
+                # MEV保护处理
+                protected_tx = mev_protector.protect_transaction(arbitrage_tx)
+                if protected_tx:
+                    # 交易模拟检查
+                    simulation = mev_protector.simulate_bundle(protected_tx)
+                    if simulation and simulation.get('success'):
+                        print(f"Simulation success! Estimated profit: {simulation['profit']} ETH")
+                        # 实际交易执行（需要用户确认）
+                        # tx_hash = mev_protector.w3.eth.send_raw_transaction(protected_tx)
+                        # print(f"Transaction sent: {tx_hash.hex()}")
+                        return True
+            
+            print("Failed to execute protected arbitrage transaction")
+            return False
 
     return False
 
@@ -108,7 +196,9 @@ DEX_EXCHANGES = {
             'provider': {
                 'url': DEX_CONFIG['ethereum']['rpc'],
                 'chainId': 1
-            }
+            },
+            'apiKey': os.getenv('DEX_API_KEY'),
+            'secret': os.getenv('DEX_API_SECRET')
         })
     },
     'pancakeswap': {
@@ -118,7 +208,9 @@ DEX_EXCHANGES = {
             'provider': {
                 'url': 'https://bsc-dataseed.binance.org/',
                 'chainId': 56
-            }
+            },
+            'apiKey': os.getenv('DEX_API_KEY'),
+            'secret': os.getenv('DEX_API_SECRET')
         })
     }
 }
@@ -172,8 +264,13 @@ def main_loop():
 
 if __name__ == "__main__":
     # 初始化DEX交易所
+    # 初始化DEX交易所（修正参数传递）
     for dex_name, config in DEX_EXCHANGES.items():
-        exchanges[dex_name] = config['class'](config['params'])
+        exchanges[dex_name] = config['class']({
+            'apiKey': os.getenv('DEX_API_KEY'),
+            'secret': os.getenv('DEX_API_SECRET'),
+            'options': config['class'].options
+        })
     
     # 添加CEX交易所
     for exchange_id in exchange_ids:
