@@ -1,10 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
 import redis
 import json
 from datetime import datetime
 from typing import List, Dict, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from enum import Enum
 
 # Redis配置
 REDIS_HOST = 'localhost'
@@ -13,12 +16,53 @@ REDIS_DB = 0
 REDIS_KEY_PREFIX = 'arbitrage:'
 REDIS_EXPIRY = 360000  # 100小时过期
 
+class ArbitrageStatus(str, Enum):
+    """套利状态枚举"""
+    PENDING = "pending"
+    SIMULATED = "simulated"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
 # 初始化FastAPI
 app = FastAPI(
     title="DeFi套利机会API",
-    description="提供实时DEX/CEX套利机会数据",
-    version="1.0.0"
+    description="""
+    提供实时DEX/CEX套利机会数据和监控接口。
+    
+    主要功能:
+    * 获取实时套利机会
+    * 查询交易对数据
+    * 监控系统状态
+    * 获取历史统计
+    """,
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None
 )
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="DeFi套利系统API",
+        version="1.0.0",
+        description="跨链套利自动化交易系统API文档",
+        routes=app.routes,
+    )
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title="DeFi套利系统API文档",
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css",
+    )
 
 # 配置CORS
 app.add_middleware(
@@ -39,26 +83,52 @@ redis_client = redis.Redis(
 
 class ArbitrageOpportunity(BaseModel):
     """套利机会数据模型"""
-    id: str
-    timestamp: datetime
-    symbol: str
-    source_exchange: str
-    target_exchange: str
-    price_difference: float
-    estimated_profit: float
-    gas_cost: float
-    transaction_details: Dict
-    status: str
+    id: str = Field(..., description="套利机会唯一标识")
+    timestamp: datetime = Field(..., description="创建时间")
+    symbol: str = Field(..., description="交易对符号")
+    source_exchange: str = Field(..., description="源交易所")
+    target_exchange: str = Field(..., description="目标交易所")
+    price_difference: float = Field(..., description="价格差异百分比")
+    estimated_profit: float = Field(..., description="预估收益(ETH)")
+    gas_cost: float = Field(..., description="Gas成本(ETH)")
+    transaction_details: Dict = Field(..., description="交易详情")
+    status: ArbitrageStatus = Field(..., description="当前状态")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "id": "1643673600-WETH-USDC-binance-uniswap",
+                "timestamp": "2024-02-05T12:00:00",
+                "symbol": "WETH/USDC",
+                "source_exchange": "Binance",
+                "target_exchange": "Uniswap",
+                "price_difference": 0.8,
+                "estimated_profit": 0.05,
+                "gas_cost": 0.02,
+                "transaction_details": {
+                    "source_price": 2000.0,
+                    "target_price": 2016.0,
+                    "position_size": 1.0
+                },
+                "status": "simulated"
+            }
+        }
 
 @app.get("/")
 async def root():
     return {"status": "running", "service": "DeFi Arbitrage API"}
 
-@app.get("/opportunities", response_model=List[ArbitrageOpportunity])
+@app.get(
+    "/opportunities", 
+    response_model=List[ArbitrageOpportunity],
+    summary="获取套利机会列表",
+    description="获取当前可用的套利机会列表,支持按交易对和最小收益过滤"
+)
 async def get_arbitrage_opportunities(
-    symbol: Optional[str] = None,
-    min_profit: Optional[float] = None,
-    limit: int = 10
+    symbol: Optional[str] = Query(None, description="交易对符号,例如: WETH/USDC"),
+    min_profit: Optional[float] = Query(None, description="最小预期收益(ETH)"),
+    status: Optional[ArbitrageStatus] = Query(None, description="套利状态过滤"),
+    limit: int = Query(10, description="返回结果数量限制", ge=1, le=100)
 ):
     """
     获取套利机会列表
@@ -91,8 +161,15 @@ async def get_arbitrage_opportunities(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/opportunities/{opportunity_id}", response_model=ArbitrageOpportunity)
-async def get_arbitrage_opportunity(opportunity_id: str):
+@app.get(
+    "/opportunities/{opportunity_id}", 
+    response_model=ArbitrageOpportunity,
+    summary="获取套利机会详情",
+    description="根据ID获取特定套利机会的详细信息"
+)
+async def get_arbitrage_opportunity(
+    opportunity_id: str = Path(..., description="套利机会ID")
+):
     """获取特定套利机会详情"""
     try:
         data = redis_client.get(f"{REDIS_KEY_PREFIX}{opportunity_id}")
@@ -102,8 +179,14 @@ async def get_arbitrage_opportunity(opportunity_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/symbols")
-async def get_top_symbols(limit: int = 20):
+@app.get(
+    "/symbols",
+    summary="获取热门交易对",
+    description="获取按交易量排序的热门交易对列表"
+)
+async def get_top_symbols(
+    limit: int = Query(20, description="返回结果数量", ge=1, le=100)
+):
     """获取交易量前N的交易对"""
     try:
         symbols_data = redis_client.get("top_trading_pairs")
@@ -114,7 +197,11 @@ async def get_top_symbols(limit: int = 20):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/stats")
+@app.get(
+    "/stats",
+    summary="获取系统统计信息",
+    description="获取系统运行状态和套利统计数据"
+)
 async def get_arbitrage_stats():
     """获取套利统计信息"""
     try:
