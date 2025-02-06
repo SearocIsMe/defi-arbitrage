@@ -24,6 +24,15 @@ class FundManager:
         self.min_margin_ratio = Decimal('0.15')  # 最小保证金率
         self.maintenance_margin_ratio = Decimal('0.075')  # 维持保证金率
         
+        # 市场条件相关参数
+        self.volatility_threshold = Decimal('0.02')  # 2%波动率阈值
+        self.high_gas_threshold = 100  # 高gas阈值(Gwei)
+        self.market_risk_levels = {
+            'low': Decimal('1.0'),    # 风险系数
+            'medium': Decimal('0.7'),
+            'high': Decimal('0.4')
+        }
+        
     async def get_wallet_balance(self, address: str) -> Decimal:
         """获取钱包ETH余额"""
         try:
@@ -33,10 +42,40 @@ class FundManager:
             print(f"Error getting wallet balance: {e}")
             return Decimal('0')
 
+    def _assess_market_risk(self, current_price: Decimal, historical_prices: List[Decimal]) -> str:
+        """评估市场风险水平"""
+        if len(historical_prices) < 2:
+            return 'medium'
+            
+        # 计算价格波动率
+        price_changes = [abs(p2 - p1) / p1 for p1, p2 in zip(historical_prices[:-1], historical_prices[1:])]
+        volatility = sum(price_changes) / len(price_changes)
+        
+        # 获取gas价格趋势
+        gas_trend = self.gas_manager.get_gas_price_trend()
+        gas_prices = self.gas_manager.get_optimal_gas_price()
+        high_gas = gas_prices and gas_prices['standard'] > self.high_gas_threshold
+        
+        # 综合评估风险
+        if volatility > self.volatility_threshold * Decimal('2') or (gas_trend == 'increasing' and high_gas):
+            return 'high'
+        elif volatility > self.volatility_threshold or gas_trend == 'increasing':
+            return 'medium'
+        return 'low'
+
+    def _adjust_position_for_market_conditions(self, 
+                                            base_size: Decimal,
+                                            current_price: Decimal,
+                                            historical_prices: List[Decimal]) -> Decimal:
+        """根据市场条件调整仓位大小"""
+        risk_level = self._assess_market_risk(current_price, historical_prices)
+        return base_size * self.market_risk_levels[risk_level]
+
     def calculate_max_position_size(self, 
                                   balance: Decimal,
                                   current_price: Decimal,
                                   leverage: Decimal,
+                                  historical_prices: List[Decimal],
                                   gas_limit: int = 350000) -> Dict:
         """
         计算最大可开仓位大小
@@ -68,9 +107,16 @@ class FundManager:
                 'liquidation_price': Decimal('0')
             }
             
-        # 计算所需保证金(考虑最小保证金率)
+        # 计算基础仓位大小
         required_margin = available_balance
-        max_position_size = required_margin * leverage
+        base_position_size = required_margin * leverage
+        
+        # 根据市场条件调整仓位大小
+        max_position_size = self._adjust_position_for_market_conditions(
+            base_position_size,
+            current_price,
+            historical_prices
+        )
         
         # 计算清算价格
         liquidation_price = self._calculate_liquidation_price(
@@ -113,10 +159,20 @@ class FundManager:
             price_rise = (margin - maintenance_margin) / position_size
             return entry_price + price_rise
             
+    def _adjust_leverage_for_conditions(self, base_leverage: Decimal, risk_level: str) -> Decimal:
+        """根据市场条件调整杠杆倍数"""
+        leverage_adjustments = {
+            'low': Decimal('1.0'),
+            'medium': Decimal('0.8'),
+            'high': Decimal('0.6')
+        }
+        return min(base_leverage * leverage_adjustments[risk_level], self.max_leverage)
+
     def calculate_leverage_params(self,
                                 desired_position_size: Decimal,
                                 available_balance: Decimal,
-                                current_price: Decimal) -> Optional[Dict]:
+                                current_price: Decimal,
+                                historical_prices: List[Decimal]) -> Optional[Dict]:
         """
         计算给定仓位所需的杠杆参数
         
@@ -134,15 +190,19 @@ class FundManager:
         """
         position_value = desired_position_size * current_price
         
-        # 计算所需杠杆
-        required_leverage = position_value / available_balance
+        # 计算基础所需杠杆
+        base_leverage = position_value / available_balance
         
-        if required_leverage > self.max_leverage:
-            print(f"Warning: Required leverage {required_leverage} exceeds maximum {self.max_leverage}")
+        # 评估市场风险并调整杠杆
+        risk_level = self._assess_market_risk(current_price, historical_prices)
+        adjusted_leverage = self._adjust_leverage_for_conditions(base_leverage, risk_level)
+        
+        if adjusted_leverage > self.max_leverage:
+            print(f"Warning: Required leverage {adjusted_leverage} exceeds maximum {self.max_leverage}")
             return None
             
-        # 计算所需保证金
-        required_margin = position_value / required_leverage
+        # 使用调整后的杠杆计算保证金
+        required_margin = position_value / adjusted_leverage
         
         # 确保满足最小保证金率要求
         min_required_margin = position_value * self.min_margin_ratio
@@ -159,7 +219,7 @@ class FundManager:
         )
         
         return {
-            'required_leverage': required_leverage,
+            'required_leverage': adjusted_leverage,
             'required_margin': required_margin,
             'liquidation_price': liquidation_price
         }

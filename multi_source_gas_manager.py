@@ -120,6 +120,10 @@ class GasPredictionService:
         self.data_file = data_file
         self.history_data = self._load_history()
         self.max_history_days = 7
+        self.ema_alpha = 0.2  # EMA平滑因子
+        self.volatility_threshold = 0.3  # 波动率阈值
+        self.spike_threshold = 0.5  # 价格突变阈值
+        self.ema_values = {'fast': None, 'standard': None, 'slow': None}
 
     def _load_history(self) -> List[Dict]:
         """加载历史数据"""
@@ -151,13 +155,36 @@ class GasPredictionService:
         self.history_data = [d for d in self.history_data if d['timestamp'] > cutoff_time]
         self._save_history()
 
+    def calculate_volatility(self, prices: List[int]) -> float:
+        """计算价格波动率"""
+        if len(prices) < 2:
+            return 0.0
+        price_changes = [abs(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
+        return statistics.mean(price_changes)
+
+    def detect_price_spike(self, current_price: int, historical_prices: List[int]) -> bool:
+        """检测价格突变"""
+        if not historical_prices:
+            return False
+        avg_price = statistics.mean(historical_prices)
+        return abs(current_price - avg_price) / avg_price > self.spike_threshold
+
+    def update_ema(self, speed: str, new_price: int):
+        """更新指数移动平均"""
+        if self.ema_values[speed] is None:
+            self.ema_values[speed] = new_price
+        else:
+            self.ema_values[speed] = int(
+                new_price * self.ema_alpha + 
+                self.ema_values[speed] * (1 - self.ema_alpha)
+            )
+
     def predict_gas_price(self) -> Optional[Dict]:
-        """预测未来gas价格"""
+        """预测未来gas价格,使用EMA和波动率分析"""
         if not self.history_data:
             return None
 
         try:
-            # 获取当前小时的历史数据
             current_hour = datetime.now().hour
             relevant_prices = {
                 'fast': [],
@@ -165,6 +192,7 @@ class GasPredictionService:
                 'slow': []
             }
 
+            # 收集相关数据
             for data in self.history_data:
                 data_hour = datetime.fromtimestamp(data['timestamp']).hour
                 if data_hour == current_hour:
@@ -172,16 +200,41 @@ class GasPredictionService:
                         if speed in data:
                             relevant_prices[speed].append(data[speed])
 
-            # 使用简单的统计方法预测
             prediction = {}
             for speed in ['fast', 'standard', 'slow']:
                 if relevant_prices[speed]:
-                    # 使用加权平均,最近的数据权重更大
+                    # 计算基础预测值
                     weights = list(range(1, len(relevant_prices[speed]) + 1))
-                    prediction[speed] = int(
+                    base_prediction = int(
                         sum(p * w for p, w in zip(relevant_prices[speed], weights)) /
                         sum(weights)
                     )
+
+                    # 检查波动率
+                    volatility = self.calculate_volatility(relevant_prices[speed])
+                    is_spike = self.detect_price_spike(
+                        base_prediction, 
+                        relevant_prices[speed][:-1]
+                    )
+
+                    # 更新EMA
+                    self.update_ema(speed, base_prediction)
+
+                    if is_spike:
+                        # 如果检测到突变,使用EMA值
+                        prediction[speed] = self.ema_values[speed]
+                    elif volatility > self.volatility_threshold:
+                        # 如果波动率高,增加EMA权重
+                        prediction[speed] = int(
+                            0.7 * self.ema_values[speed] + 
+                            0.3 * base_prediction
+                        )
+                    else:
+                        # 正常情况下的预测
+                        prediction[speed] = int(
+                            0.3 * self.ema_values[speed] + 
+                            0.7 * base_prediction
+                        )
                 else:
                     prediction[speed] = None
 
