@@ -14,21 +14,9 @@
 
 ### 已实现特性
 - 支持主流CEX (Binance, OKX)
-- 集成DEX协议 (Uniswap V3, Sushiswap, PancakeSwap)
-- 跨链支持 (Ethereum, Arbitrum)
-- Flashbots保护
-- 动态仓位计算
-- 2倍杠杆交易
-- 多源Gas价格聚合
-- 智能Gas价格预测
-- 自动交易对选择
-  * 多DEX流动性数据聚合
-  * TVL和交易量加权排名
-  * 自动更新热门交易对
-
-#### 优化方向
-- 将跨链支持做成可配置,支持以下成熟链:
-  * Layer 2:
+- 集成DEX协议 (Uniswap V3, Sushiswap, PancakeSwap等)
+- 全面的跨链支持:
+  * Layer 2网络:
     - Arbitrum: 高EVM兼容性,低gas费用,快速终局性
     - Optimism: 强EVM兼容性,Bedrock升级后性能提升
     - zkSync Era: 零知识证明,高吞吐量,即时终局性
@@ -38,27 +26,24 @@
     - Avalanche: 子网架构,高性能,强去中心化
     - Polygon PoS: 成熟稳定,丰富的DeFi应用
     - Fantom: 高速确认,低费用,EVM兼容
-  * 跨链桥:
+  * 跨链桥集成:
     - LayerZero: 去中心化程度高,安全性强
     - Stargate: 基于LayerZero,流动性聚合
     - Multichain: 支持链种类多,成熟稳定
     - Celer: 快速跨链,支持多种资产
-    
-  * 链选择考虑因素:
-    - 流动性: TVL > $500M的链优先考虑
-    - 安全性: 主网稳定运行时间 > 1年
-    - 兼容性: 优先支持EVM兼容链
-    - 跨链桥: 
-      * 日交易量 > $10M
-      * 无重大安全事故历史
-      * 多重签名或去中心化验证
-      * 完善的预言机支持
-    - 生态:
-      * 活跃开发者 > 100
-      * 日活用户 > 10000
-      * DEX总锁仓量 > $100M
-
-
+- 智能跨链路由:
+  * 自动选择最优跨链桥
+  * 基于总成本的路径优化
+  * 动态费用估算
+- Flashbots保护 (以太坊主网)
+- 动态仓位计算
+- 2倍杠杆交易
+- 多源Gas价格聚合
+- 智能Gas价格预测
+- 自动交易对选择
+  * 多DEX流动性数据聚合
+  * TVL和交易量加权排名
+  * 自动更新热门交易对
 
 ## 系统组件
 
@@ -68,9 +53,14 @@
 - gas_manager.py: 基础Gas管理
 - multi_source_gas_manager.py: 多源Gas价格聚合与优化
 - dex_liquidity_manager.py: DEX流动性数据管理
-  * 多源数据聚合 (Uniswap V3, SushiSwap, PancakeSwap)
+  * 多源数据聚合 (Uniswap V3, SushiSwap, PancakeSwap等)
   * 智能交易对排名
   * Redis缓存支持
+- chain_config.py: 跨链配置管理
+  * 链配置
+  * DEX合约地址
+  * 代币地址映射
+  * 跨链桥配置
 
 ## 关键优化方向
 
@@ -88,6 +78,10 @@
   * 动态权重预测模型
 - EIP-1559定价机制
 - 动态Gas费用调整
+- 跨链Gas成本优化:
+  * 链特定Gas估算
+  * 桥费用计算
+  * 总成本优化
 
 优化建议:
 1. 扩展Gas数据源:
@@ -118,6 +112,10 @@
   * 价格波动率(2%阈值)
   * Gas价格趋势分析
   * 高Gas预警(>100 Gwei)
+- 跨链资金管理:
+  * 链特定风险评估
+  * 跨链费用优化
+  * 流动性分配策略
 
 优化建议:
 1. 高级杠杆管理:
@@ -145,6 +143,10 @@
   * 基于流动性的风险评估
   * 多DEX数据验证
   * 实时流动性监控
+- 跨链风险控制:
+  * 桥安全性评估
+  * 链特定风险评估
+  * 跨链交易验证
 
 优化建议:
 1. 增强风控机制:
@@ -255,7 +257,18 @@ ArbitrageOpportunity {
     "price_difference": "float", // 价格差异(%)
     "estimated_profit": "float", // 预估收益(ETH)
     "gas_cost": "float",        // Gas成本(ETH)
-    "transaction_details": {},   // 交易详情
+    "transaction_details": {     // 交易详情
+        "arbitrage_tx": {},      // 交易数据
+        "gas_params": {},        // Gas参数
+        "position": {},          // 仓位信息
+        "cross_chain": {         // 跨链信息
+            "bridge": "string",  // 使用的跨链桥
+            "source_chain": "string", // 源链
+            "target_chain": "string", // 目标链
+            "bridge_fee": "float",    // 桥费用
+            "bridge_contract": "string" // 桥合约地址
+        }
+    },
     "status": "enum"            // 状态(pending/simulated/executing/completed/failed)
 }
 ```
@@ -293,6 +306,10 @@ stats = response.json()
 - 平均收益率: >0.8%/笔
 - 交易对更新频率: 60秒
 - 套利检测延迟: <2秒/对
+- 跨链交易完成时间: 
+  * Layer 2: 1-5分钟
+  * 独立公链: 3-10分钟
+  * 取决于目标链和所选跨链桥
 
 
 # Install Redis on Windows
@@ -342,5 +359,3 @@ sudo service redis-server start
 lindows@DTC-4Q563Y3:~$ redis-cli
 127.0.0.1:6379> ping
 PONG
-
-```

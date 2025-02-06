@@ -6,6 +6,7 @@ from datetime import datetime
 from gql import gql, Client
 from logger_config import get_logger
 from api_service import store_arbitrage_opportunity, store_top_trading_pairs
+from chain_config import CHAIN_CONFIG, BRIDGE_CONFIG, GAS_LIMITS, DEFAULT_TOKENS
 
 # 初始化logger
 logger = get_logger()
@@ -15,23 +16,8 @@ from decimal import Decimal
 from multi_source_gas_manager import GasManager
 from fund_manager import FundManager, Position
 
-# 跨链套利配置
-DEX_CONFIG = {
-    'ethereum': {
-        'rpc': f"https://mainnet.infura.io/v3/{os.getenv('INFURA_API_KEY')}",
-        'dex': {
-            'uniswap_v3': '0xE592427A0AEce92De3Edee1F18E0157C05861564',
-            'sushiswap': '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F'
-        },
-        'bridge': '0x3F4A885ed8d9cDF10f3349357E3b243F3695b24A'  # LayerZero主网桥接地址
-    },
-    'arbitrum': {
-        'rpc': 'https://arb1.arbitrum.io/rpc',
-        'dex': {
-            'uniswap_v3': '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45'
-        }
-    }
-}
+# 支持的链和DEX配置
+DEX_CONFIG = CHAIN_CONFIG
 
 # MEV保护实现类
 class MEVProtector:
@@ -224,16 +210,62 @@ async def detect_arbitrage_opportunity(gas_manager: GasManager, fund_manager: Fu
                 logger.warning(f"Expected profit ({float(expected_profit)}) too low compared to gas cost ({float(gas_cost)})")
                 continue
             
-            # 初始化MEV保护
+            # 选择最优跨链桥和目标链
+            best_bridge = None
+            target_chain = None
+            lowest_total_cost = float('inf')
+            
+            for bridge_name, bridge_config in BRIDGE_CONFIG.items():
+                for chain_name, chain_config in DEX_CONFIG.items():
+                    if chain_name == 'ethereum':  # 跳过源链
+                        continue
+                        
+                    try:
+                        # 获取跨链费用估算
+                        bridge_fee = gas_manager.estimate_bridge_fee(
+                            bridge_name,
+                            chain_config['chain_id'],
+                            position.size
+                        )
+                        
+                        # 获取目标链gas费用
+                        target_gas_cost = gas_manager.estimate_gas_cost_on_chain(
+                            chain_config['chain_id'],
+                            GAS_LIMITS['swap']
+                        )
+                        
+                        total_cost = bridge_fee + target_gas_cost
+                        if total_cost < lowest_total_cost:
+                            lowest_total_cost = total_cost
+                            best_bridge = bridge_name
+                            target_chain = chain_name
+                            
+                    except Exception as e:
+                        logger.error(f"Error estimating costs for {bridge_name} to {chain_name}: {e}")
+                        continue
+            
+            if not best_bridge or not target_chain:
+                logger.warning("No suitable bridge or target chain found")
+                continue
+                
+            logger.info(f"Selected bridge: {best_bridge} to chain: {target_chain}")
+            
+            # 初始化MEV保护 (仅在以太坊主网使用)
             mev_protector = MEVProtector(DEX_CONFIG['ethereum'])
             
             # 构建跨链套利交易
+            bridge_contract = BRIDGE_CONFIG[best_bridge]['contracts']['ethereum']
             arbitrage_tx = {
-                'chainId': 1,
-                'to': DEX_CONFIG['ethereum']['bridge'],
+                'chainId': DEX_CONFIG['ethereum']['chain_id'],
+                'to': bridge_contract,
                 'value': Web3.to_wei(str(position.size), 'ether'),
-                'data': '0x',
-                'gas': gas_limit
+                'data': fund_manager.encode_bridge_data(
+                    best_bridge,
+                    target_chain,
+                    position.size,
+                    wallet_address
+                ),
+                'gas': GAS_LIMITS['bridge']
             }
             
             # 获取最优Gas参数
@@ -272,65 +304,167 @@ async def detect_arbitrage_opportunity(gas_manager: GasManager, fund_manager: Fu
 
     return False, None
 
-# DEX接口配置
-DEX_EXCHANGES = {
-    'uniswap': {
-        'router': DEX_CONFIG['ethereum']['dex']['uniswap_v3'],
-        'chain_id': 1,
-        'provider': Web3(Web3.HTTPProvider(DEX_CONFIG['ethereum']['rpc'])),
-        'abi': [
-            # Uniswap V3 Router ABI
-            {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"amountOutMinimum","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"},{"internalType":"address","name":"to","type":"address"}],"name":"exactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"payable","type":"function"},
-            {"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountIn","type":"uint256"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}
-        ]
-    },
-    'pancakeswap': {
-        'router': '0x10ED43C718714eb63d5aA57B78B54704E256024E',  # PancakeSwap Router v2
-        'chain_id': 56,
-        'provider': Web3(Web3.HTTPProvider('https://bsc-dataseed.binance.org/')),
-        'abi': [
-            # PancakeSwap Router ABI
-            {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"stateMutability":"view","type":"function"},
-            {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"amountOutMin","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"name":"swapExactTokensForTokens","outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"stateMutability":"nonpayable","type":"function"}
-        ]
-    }
+# DEX Router ABIs
+ROUTER_ABIS = {
+    'uniswap_v3': [
+        {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"amountOutMinimum","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"},{"internalType":"address","name":"to","type":"address"}],"name":"exactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"payable","type":"function"},
+        {"inputs":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint256","name":"amountIn","type":"uint256"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}
+    ],
+    'sushiswap': [
+        {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"stateMutability":"view","type":"function"},
+        {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"amountOutMin","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"name":"swapExactTokensForTokens","outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"stateMutability":"nonpayable","type":"function"}
+    ]
 }
 
-def get_dex_price(dex_name, token_in, token_out, amount_in=Web3.to_wei(1, 'ether')):
+def initialize_dex_exchanges():
+    """
+    初始化所有支持链上的DEX交易所
+    返回: dict - 包含所有初始化的DEX合约
+    """
+    dex_exchanges = {}
+    
+    for chain_name, chain_config in DEX_CONFIG.items():
+        # 验证链配置
+        if not validate_chain_config(chain_name, chain_config):
+            logger.warning(f"Skipping invalid chain configuration: {chain_name}")
+            continue
+            
+        try:
+            web3 = Web3(Web3.HTTPProvider(chain_config['rpc']))
+            # 验证RPC连接
+            if not web3.is_connected():
+                logger.error(f"Failed to connect to {chain_name} RPC endpoint")
+                continue
+                
+            # 初始化该链上的所有DEX
+            for dex_name, router_address in chain_config['dex'].items():
+                try:
+                    # 验证合约地址格式
+                    if not web3.is_address(router_address):
+                        logger.error(f"Invalid router address for {chain_name}_{dex_name}: {router_address}")
+                        continue
+                        
+                    # 获取对应的ABI
+                    abi = ROUTER_ABIS.get(dex_name)
+                    if not abi:
+                        logger.warning(f"ABI not found for {dex_name}, using sushiswap ABI")
+                        abi = ROUTER_ABIS['sushiswap']
+                    
+                    # 创建合约实例
+                    contract = web3.eth.contract(
+                        address=router_address,
+                        abi=abi
+                    )
+                    
+                    # 验证合约代码是否存在
+                    code = web3.eth.get_code(router_address)
+                    if code == b'' or code == '0x':
+                        logger.error(f"No contract code found at {router_address} for {chain_name}_{dex_name}")
+                        continue
+                    
+                    # 存储合约信息
+                    dex_key = f"{chain_name}_{dex_name}"
+                    dex_exchanges[dex_key] = {
+                        'contract': contract,
+                        'provider': web3,
+                        'chain_id': chain_config['chain_id'],
+                        'router': router_address,
+                        'chain_name': chain_name
+                    }
+                    logger.info(f"Successfully initialized {dex_key} contract at {router_address}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to initialize {chain_name}_{dex_name}: {str(e)}")
+                    continue
+                    
+        except Exception as e:
+            logger.error(f"Failed to initialize Web3 for chain {chain_name}: {str(e)}")
+            continue
+    
+    if not dex_exchanges:
+        logger.warning("No DEX exchanges were successfully initialized")
+    else:
+        logger.info(f"Successfully initialized {len(dex_exchanges)} DEX contracts")
+    
+    return dex_exchanges
+
+# 初始化所有DEX交易所
+DEX_EXCHANGES = {}  # 将在main中初始化
+
+def get_dex_price(dex_key, token_in, token_out, amount_in=Web3.to_wei(1, 'ether')):
     """
     获取DEX交易所价格
-    @param dex_name: DEX名称
+    @param dex_key: DEX标识符 (格式: chain_name_dex_name, 例如: ethereum_uniswap_v3)
     @param token_in: 输入代币地址
     @param token_out: 输出代币地址
     @param amount_in: 输入金额(默认1 ETH)
     @return: 输出金额
     """
     try:
-        dex = DEX_EXCHANGES[dex_name]
-        contract = dex['provider'].eth.contract(
-            address=dex['router'],
-            abi=dex['abi']
-        )
-        
-        if dex_name == 'uniswap':
-            # Uniswap V3使用quoteExactInputSingle
-            amount_out = contract.functions.quoteExactInputSingle(
-                token_in,
-                token_out,
-                3000,  # 0.3% fee tier
-                amount_in
-            ).call()
-        else:
-            # PancakeSwap使用getAmountsOut
-            amounts = contract.functions.getAmountsOut(
-                amount_in,
-                [token_in, token_out]
-            ).call()
-            amount_out = amounts[1]
+        # 验证输入参数
+        if not dex_key or not token_in or not token_out:
+            logger.error("Missing required parameters for get_dex_price")
+            return None
             
-        return Web3.from_wei(amount_out, 'ether')
+        if dex_key not in DEX_EXCHANGES:
+            logger.error(f"DEX {dex_key} not found in initialized exchanges")
+            return None
+            
+        dex = DEX_EXCHANGES[dex_key]
+        contract = dex['contract']
+        web3 = dex['provider']
+        
+        # 验证代币地址
+        if not web3.is_address(token_in) or not web3.is_address(token_out):
+            logger.error(f"Invalid token addresses for {dex_key}")
+            return None
+            
+        try:
+            # 检查代币合约是否存在
+            for token in [token_in, token_out]:
+                code = web3.eth.get_code(token)
+                if code == b'' or code == '0x':
+                    logger.error(f"No contract code found at token address {token}")
+                    return None
+                    
+            # 根据DEX类型选择报价方法
+            if 'uniswap_v3' in dex_key:
+                try:
+                    # Uniswap V3使用quoteExactInputSingle
+                    amount_out = contract.functions.quoteExactInputSingle(
+                        token_in,
+                        token_out,
+                        3000,  # 0.3% fee tier
+                        amount_in
+                    ).call()
+                except Exception as e:
+                    logger.error(f"Uniswap V3 quote failed for {dex_key}: {str(e)}")
+                    return None
+            else:
+                try:
+                    # 其他DEX使用getAmountsOut
+                    amounts = contract.functions.getAmountsOut(
+                        amount_in,
+                        [token_in, token_out]
+                    ).call()
+                    amount_out = amounts[1]
+                except Exception as e:
+                    logger.error(f"GetAmountsOut failed for {dex_key}: {str(e)}")
+                    return None
+                    
+            price = Web3.from_wei(amount_out, 'ether')
+            if price <= 0:
+                logger.warning(f"Zero or negative price returned from {dex_key}")
+                return None
+                
+            return price
+            
+        except Exception as e:
+            logger.error(f"Contract call failed for {dex_key}: {str(e)}")
+            return None
+            
     except Exception as e:
-        logger.error(f"Error fetching DEX price from {dex_name}: {e}", exc_info=True)
+        logger.error(f"Error fetching DEX price from {dex_key}: {str(e)}")
         return None
 
 async def fetch_top_pairs():
@@ -338,13 +472,46 @@ async def fetch_top_pairs():
     try:
         from dex_liquidity_manager import DexLiquidityManager
         dex_manager = DexLiquidityManager()
-        pairs = await dex_manager.get_top_trading_pairs()
-        # 存储到Redis
-        store_top_trading_pairs(pairs)
-        return pairs
+        
+        try:
+            pairs = await dex_manager.get_top_trading_pairs()
+            if not pairs:
+                logger.warning("No trading pairs returned from DexLiquidityManager")
+                return get_default_pairs()
+                
+            # 验证交易对格式
+            valid_pairs = []
+            for pair in pairs:
+                if isinstance(pair, str) and '/' in pair:
+                    valid_pairs.append(pair)
+                else:
+                    logger.warning(f"Invalid trading pair format: {pair}")
+                    
+            if not valid_pairs:
+                logger.warning("No valid trading pairs found")
+                return get_default_pairs()
+                
+            # 存储到Redis
+            if store_top_trading_pairs(valid_pairs):
+                logger.info(f"Successfully stored {len(valid_pairs)} trading pairs")
+            else:
+                logger.warning("Failed to store trading pairs in Redis")
+                
+            return valid_pairs
+            
+        except Exception as e:
+            logger.error(f"Error in DexLiquidityManager: {str(e)}")
+            return get_default_pairs()
+            
     except Exception as e:
-        logger.error(f"Error fetching top pairs: {e}", exc_info=True)
-        return ['WETH/USDC', 'WBTC/USDT']  # 默认交易对
+        logger.error(f"Error fetching top pairs: {str(e)}")
+        return get_default_pairs()
+
+def get_default_pairs():
+    """返回默认交易对列表"""
+    default_pairs = ['WETH/USDC', 'WBTC/USDT']
+    logger.info(f"Using default trading pairs: {default_pairs}")
+    return default_pairs
 
 async def main_loop(gas_manager: GasManager, fund_manager: FundManager, wallet_address: str):
     """带信号处理的主循环"""
@@ -427,20 +594,9 @@ if __name__ == "__main__":
         logger.error("WALLET_ADDRESS environment variable not set")
         exit(1)
     
-    # 初始化DEX合约
-    for dex_name, config in DEX_EXCHANGES.items():
-        try:
-            contract = config['provider'].eth.contract(
-                address=config['router'],
-                abi=config['abi']
-            )
-            exchanges[dex_name] = {
-                'contract': contract,
-                'provider': config['provider']
-            }
-            logger.info(f"Initialized {dex_name} contract at {config['router']}")
-        except Exception as e:
-            logger.error(f"Failed to initialize {dex_name}: {e}", exc_info=True)
+    # 初始化所有链上的DEX交易所
+    DEX_EXCHANGES = initialize_dex_exchanges()
+    logger.info(f"Initialized {len(DEX_EXCHANGES)} DEX contracts across all supported chains")
     
     # 添加CEX交易所
     for exchange_id in exchange_ids:

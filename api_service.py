@@ -9,12 +9,16 @@ from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
 from enum import Enum
 
+from logger_config import get_logger
+
 # Redis配置
 REDIS_HOST = 'localhost'
 REDIS_PORT = 6379
 REDIS_DB = 0
 REDIS_KEY_PREFIX = 'arbitrage:'
 REDIS_EXPIRY = 360000  # 100小时过期
+
+logger = get_logger("api_service")
 
 class ArbitrageStatus(str, Enum):
     """套利状态枚举"""
@@ -74,12 +78,18 @@ app.add_middleware(
 )
 
 # 初始化Redis连接
-redis_client = redis.Redis(
-    host=REDIS_HOST,
-    port=REDIS_PORT,
-    db=REDIS_DB,
-    decode_responses=True
-)
+try:
+    redis_client = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        db=REDIS_DB,
+        decode_responses=True
+    )
+    redis_client.ping()  # Test connection
+    logger.info("Successfully connected to Redis")
+except redis.ConnectionError as e:
+    logger.error(f"Failed to connect to Redis: {str(e)}")
+    redis_client = None
 
 class ArbitrageOpportunity(BaseModel):
     """套利机会数据模型"""
@@ -137,29 +147,43 @@ async def get_arbitrage_opportunities(
     - limit: 返回结果数量限制
     """
     try:
+        if not redis_client:
+            logger.error("Redis client is not initialized")
+            return []
+
         # 获取所有套利机会键
-        keys = redis_client.keys(f"{REDIS_KEY_PREFIX}*")
+        try:
+            keys = redis_client.keys(f"{REDIS_KEY_PREFIX}*")
+        except redis.RedisError as e:
+            logger.error(f"Failed to fetch keys from Redis: {str(e)}")
+            return []
+
         opportunities = []
         
         for key in keys:
-            data = redis_client.get(key)
-            if data:
-                opp = json.loads(data)
-                
-                # 应用过滤条件
-                if symbol and opp['symbol'] != symbol:
-                    continue
-                if min_profit and opp['estimated_profit'] < min_profit:
-                    continue
+            try:
+                data = redis_client.get(key)
+                if data:
+                    opp = json.loads(data)
                     
-                opportunities.append(ArbitrageOpportunity(**opp))
+                    # 应用过滤条件
+                    if symbol and opp['symbol'] != symbol:
+                        continue
+                    if min_profit and opp['estimated_profit'] < min_profit:
+                        continue
+                        
+                    opportunities.append(ArbitrageOpportunity(**opp))
+            except (redis.RedisError, json.JSONDecodeError) as e:
+                logger.error(f"Error processing key {key}: {str(e)}")
+                continue
                 
         # 按预期收益排序
         opportunities.sort(key=lambda x: x.estimated_profit, reverse=True)
         return opportunities[:limit]
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error in get_arbitrage_opportunities: {str(e)}")
+        return []
 
 @app.get(
     "/opportunities/{opportunity_id}", 
@@ -172,12 +196,24 @@ async def get_arbitrage_opportunity(
 ):
     """获取特定套利机会详情"""
     try:
-        data = redis_client.get(f"{REDIS_KEY_PREFIX}{opportunity_id}")
-        if not data:
-            raise HTTPException(status_code=404, detail="Opportunity not found")
-        return ArbitrageOpportunity(**json.loads(data))
+        if not redis_client:
+            logger.error("Redis client is not initialized")
+            raise HTTPException(status_code=503, detail="Redis service unavailable")
+
+        try:
+            data = redis_client.get(f"{REDIS_KEY_PREFIX}{opportunity_id}")
+            if not data:
+                raise HTTPException(status_code=404, detail="Opportunity not found")
+            return ArbitrageOpportunity(**json.loads(data))
+        except redis.RedisError as e:
+            logger.error(f"Redis error while fetching opportunity {opportunity_id}: {str(e)}")
+            raise HTTPException(status_code=503, detail="Redis service error")
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON data for opportunity {opportunity_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail="Data format error")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error in get_arbitrage_opportunity: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get(
     "/symbols",
@@ -189,13 +225,26 @@ async def get_top_symbols(
 ):
     """获取交易量前N的交易对"""
     try:
-        symbols_data = redis_client.get("top_trading_pairs")
-        if not symbols_data:
-            return {"error": "No symbol data available"}
-        symbols = json.loads(symbols_data)
-        return {"symbols": symbols[:limit]}
+        if not redis_client:
+            logger.error("Redis client is not initialized")
+            return {"error": "Redis service unavailable"}
+
+        try:
+            symbols_data = redis_client.get("top_trading_pairs")
+            if not symbols_data:
+                logger.warning("No top trading pairs data available")
+                return {"symbols": []}
+            symbols = json.loads(symbols_data)
+            return {"symbols": symbols[:limit]}
+        except redis.RedisError as e:
+            logger.error(f"Redis error while fetching top symbols: {str(e)}")
+            return {"error": "Failed to fetch symbols data"}
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON data for top symbols: {str(e)}")
+            return {"error": "Invalid symbols data format"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error in get_top_symbols: {str(e)}")
+        return {"error": "Internal server error"}
 
 @app.get(
     "/stats",
@@ -237,39 +286,65 @@ def store_arbitrage_opportunity(
     gas_cost: float,
     transaction_details: Dict,
     status: str = "pending"
-) -> str:
+) -> Optional[str]:
     """
     存储套利机会到Redis
     返回: opportunity_id
     """
-    opportunity_id = f"{datetime.now().timestamp()}-{symbol}-{source_exchange}-{target_exchange}"
-    
-    opportunity_data = {
-        "id": opportunity_id,
-        "timestamp": datetime.now().isoformat(),
-        "symbol": symbol,
-        "source_exchange": source_exchange,
-        "target_exchange": target_exchange,
-        "price_difference": price_difference,
-        "estimated_profit": estimated_profit,
-        "gas_cost": gas_cost,
-        "transaction_details": transaction_details,
-        "status": status
-    }
-    
-    redis_key = f"{REDIS_KEY_PREFIX}{opportunity_id}"
-    redis_client.setex(
-        redis_key,
-        REDIS_EXPIRY,
-        json.dumps(opportunity_data)
-    )
-    
-    return opportunity_id
+    try:
+        if not redis_client:
+            logger.error("Redis client is not initialized")
+            return None
 
-def store_top_trading_pairs(pairs: List[str]):
+        opportunity_id = f"{datetime.now().timestamp()}-{symbol}-{source_exchange}-{target_exchange}"
+        
+        opportunity_data = {
+            "id": opportunity_id,
+            "timestamp": datetime.now().isoformat(),
+            "symbol": symbol,
+            "source_exchange": source_exchange,
+            "target_exchange": target_exchange,
+            "price_difference": price_difference,
+            "estimated_profit": estimated_profit,
+            "gas_cost": gas_cost,
+            "transaction_details": transaction_details,
+            "status": status
+        }
+        
+        redis_key = f"{REDIS_KEY_PREFIX}{opportunity_id}"
+        try:
+            redis_client.setex(
+                redis_key,
+                REDIS_EXPIRY,
+                json.dumps(opportunity_data)
+            )
+            logger.info(f"Successfully stored arbitrage opportunity: {opportunity_id}")
+            return opportunity_id
+        except redis.RedisError as e:
+            logger.error(f"Failed to store arbitrage opportunity: {str(e)}")
+            return None
+    except Exception as e:
+        logger.error(f"Unexpected error in store_arbitrage_opportunity: {str(e)}")
+        return None
+
+def store_top_trading_pairs(pairs: List[str]) -> bool:
     """存储交易量前N的交易对"""
-    redis_client.setex(
-        "top_trading_pairs",
-        REDIS_EXPIRY,
-        json.dumps(pairs)
-    )
+    try:
+        if not redis_client:
+            logger.error("Redis client is not initialized")
+            return False
+
+        try:
+            redis_client.setex(
+                "top_trading_pairs",
+                REDIS_EXPIRY,
+                json.dumps(pairs)
+            )
+            logger.info("Successfully stored top trading pairs")
+            return True
+        except redis.RedisError as e:
+            logger.error(f"Failed to store top trading pairs: {str(e)}")
+            return False
+    except Exception as e:
+        logger.error(f"Unexpected error in store_top_trading_pairs: {str(e)}")
+        return False
