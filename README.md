@@ -283,7 +283,51 @@ stats = response.json()
 
 
 # Install Redis on Windows
+
+## Step - 1
+ Install wsl in windows https://learn.microsoft.com/en-us/windows/wsl/install
 ```
 wsl --install
+C:\Users\haipeng.jiang\Documents\00-learn\0-price-arbitrage\defi-arbitrage>wsl --install
+Ubuntu is already installed.
+Launching Ubuntu...
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 5.15.167.4-microsoft-standard-WSL2 x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Thu Feb  6 10:06:51 +08 2025
+
+  System load:  0.16                Processes:             72
+  Usage of /:   0.1% of 1006.85GB   Users logged in:       0
+  Memory usage: 12%                 IPv4 address for eth0: 172.27.131.191
+  Swap usage:   0%
+
+
+This message is shown once a day. To disable it please create the
+/home/lindows/.hushlogin file.
+lindows@DTC-4Q563Y3:~$ 
+
 lindows@DTC-4Q563Y3:~$, 7788
+```
+
+
+## Step - 2 Install Redis
+```
+curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
+
+sudo apt-get update
+sudo apt-get install redis redis-server -y
+sudo service redis-server start
+```
+
+## Step - 3 Connect to Redis
+```
+lindows@DTC-4Q563Y3:~$ redis-cli
+127.0.0.1:6379> ping
+PONG
+
 ```
