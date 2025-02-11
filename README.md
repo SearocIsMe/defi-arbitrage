@@ -15,6 +15,7 @@
 ### 已实现特性
 - 支持主流CEX (Binance, OKX)
 - 集成DEX协议 (Uniswap V3, Sushiswap, PancakeSwap等)
+  * Uniswap V3: 支持集中流动性, 高级路由优化, 精确价格计算
 - 全面的跨链支持:
   * Layer 2网络:
     - Arbitrum: 高EVM兼容性,低gas费用,快速终局性
@@ -54,6 +55,8 @@
 - multi_source_gas_manager.py: 多源Gas价格聚合与优化
 - dex_liquidity_manager.py: DEX流动性数据管理
   * 多源数据聚合 (Uniswap V3, SushiSwap, PancakeSwap等)
+  * Uniswap V3 集中流动性管理
+  * 高级路由优化
   * 智能交易对排名
   * Redis缓存支持
 - chain_config.py: 跨链配置管理
@@ -61,6 +64,15 @@
   * DEX合约地址
   * 代币地址映射
   * 跨链桥配置
+
+### 新增功能
+- 实时Gas价格监控
+- 智能Gas价格预测
+- 实时清算价格计算
+- 多层级止损策略
+- 实时流动性监控
+- 实时交易监控
+- 实时风险监控
 
 ## 关键优化方向
 
@@ -82,6 +94,8 @@
   * 链特定Gas估算
   * 桥费用计算
   * 总成本优化
+  * 实时Gas价格监控
+  * 智能Gas价格预测
 
 优化建议:
 1. 扩展Gas数据源:
@@ -100,6 +114,8 @@
 ### 资金管理优化
 当前实现:
 - 支持动态杠杆交易(1-3倍)
+- 实时清算价格计算
+- 多层级止损策略
 - 市场条件自适应仓位:
   * 低风险: 100%基础仓位
   * 中风险: 70%基础仓位
@@ -114,6 +130,7 @@
   * 高Gas预警(>100 Gwei)
 - 跨链资金管理:
   * 链特定风险评估
+  * 实时流动性监控
   * 跨链费用优化
   * 流动性分配策略
 
@@ -126,6 +143,7 @@
 2. 资金效率优化:
    - 多策略资金分配
    - 动态仓位调整
+   - 实时风险监控
    - 风险敞口控制
    - 流动性管理
 3. 收益优化系统:
@@ -139,6 +157,7 @@
 - MEV保护
 - 智能滑点控制
 - 多级风控阈值
+- 实时交易监控
 - 自动交易对选择
   * 基于流动性的风险评估
   * 多DEX数据验证
@@ -147,6 +166,7 @@
   * 桥安全性评估
   * 链特定风险评估
   * 跨链交易验证
+  * 实时风险监控
 
 优化建议:
 1. 增强风控机制:
@@ -166,6 +186,7 @@
 ## 配置说明
 
 ### 环境变量
+新增环境变量:
 ```
 INFURA_API_KEY=你的Infura API密钥
 FLASHBOTS_SIGNER_KEY=你的Flashbots签名密钥
@@ -185,8 +206,9 @@ REDIS_DB=0
 - 交易对数据: 100小时过期
 - 套利机会: 100小时过期
 - 实时行情: 60秒过期
+
 ### 安全优化
-   钱包地址最好用加密算法保护一下
+钱包地址最好用加密算法保护一下
 
 ### 运行要求
 - Python 3.8+
@@ -207,155 +229,3 @@ pip install -r requirements.txt
 - aiohttp: 异步HTTP
 - redis: 数据缓存
 - fastapi: API服务
-
-## API文档
-
-### RESTful API接口
-
-#### 套利机会相关
-```
-GET /opportunities
-获取套利机会列表
-参数:
-- symbol: 交易对符号 (可选)
-- min_profit: 最小预期收益 (可选)
-- status: 套利状态过滤 (可选)
-- limit: 返回数量 (默认10,最大100)
-
-GET /opportunities/{opportunity_id}
-获取特定套利机会详情
-参数:
-- opportunity_id: 套利机会ID
-
-GET /symbols
-获取热门交易对列表
-参数:
-- limit: 返回数量 (默认20,最大100)
-
-GET /stats
-获取系统统计信息
-返回:
-- total_opportunities: 总机会数
-- average_profit: 平均收益
-- last_update: 最后更新时间
-```
-
-### API状态码
-- 200: 请求成功
-- 400: 请求参数错误
-- 404: 资源不存在
-- 500: 服务器内部错误
-
-### 数据模型
-```json
-ArbitrageOpportunity {
-    "id": "string",              // 套利机会ID
-    "timestamp": "datetime",     // 创建时间
-    "symbol": "string",          // 交易对符号
-    "source_exchange": "string", // 源交易所
-    "target_exchange": "string", // 目标交易所
-    "price_difference": "float", // 价格差异(%)
-    "estimated_profit": "float", // 预估收益(ETH)
-    "gas_cost": "float",        // Gas成本(ETH)
-    "transaction_details": {     // 交易详情
-        "arbitrage_tx": {},      // 交易数据
-        "gas_params": {},        // Gas参数
-        "position": {},          // 仓位信息
-        "cross_chain": {         // 跨链信息
-            "bridge": "string",  // 使用的跨链桥
-            "source_chain": "string", // 源链
-            "target_chain": "string", // 目标链
-            "bridge_fee": "float",    // 桥费用
-            "bridge_contract": "string" // 桥合约地址
-        }
-    },
-    "status": "enum"            // 状态(pending/simulated/executing/completed/failed)
-}
-```
-
-### Swagger文档
-- 访问 `/docs` 获取交互式API文档
-- 支持在线API测试
-- 包含详细的参数说明
-- 提供请求/响应示例
-
-### API使用示例
-```python
-import requests
-
-# 获取所有套利机会
-response = requests.get('http://localhost:8000/opportunities')
-opportunities = response.json()
-
-# 获取特定交易对的套利机会
-params = {'symbol': 'WETH/USDC', 'min_profit': 0.01}
-response = requests.get('http://localhost:8000/opportunities', params=params)
-filtered_opportunities = response.json()
-
-# 获取系统统计信息
-response = requests.get('http://localhost:8000/stats')
-stats = response.json()
-```
-
-## 性能指标
-- 最小套利差价: 0.5%
-- Gas成本覆盖: 预期收益 > 1.2倍Gas成本
-- 单次交易限额: 0.1-0.5 ETH
-- Gas价格预测准确率: >85%
-- 套利成功率: >90%
-- 平均收益率: >0.8%/笔
-- 交易对更新频率: 60秒
-- 套利检测延迟: <2秒/对
-- 跨链交易完成时间: 
-  * Layer 2: 1-5分钟
-  * 独立公链: 3-10分钟
-  * 取决于目标链和所选跨链桥
-
-
-# Install Redis on Windows
-
-## Step - 1
- Install wsl in windows https://learn.microsoft.com/en-us/windows/wsl/install
-```
-wsl --install
-C:\Users\haipeng.jiang\Documents\00-learn\0-price-arbitrage\defi-arbitrage>wsl --install
-Ubuntu is already installed.
-Launching Ubuntu...
-Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 5.15.167.4-microsoft-standard-WSL2 x86_64)
-
- * Documentation:  https://help.ubuntu.com
- * Management:     https://landscape.canonical.com
- * Support:        https://ubuntu.com/pro
-
- System information as of Thu Feb  6 10:06:51 +08 2025
-
-  System load:  0.16                Processes:             72
-  Usage of /:   0.1% of 1006.85GB   Users logged in:       0
-  Memory usage: 12%                 IPv4 address for eth0: 172.27.131.191
-  Swap usage:   0%
-
-
-This message is shown once a day. To disable it please create the
-/home/lindows/.hushlogin file.
-lindows@DTC-4Q563Y3:~$ 
-
-lindows@DTC-4Q563Y3:~$, 7788
-```
-
-
-## Step - 2 Install Redis
-```
-curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
-
-echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
-
-sudo apt-get update
-sudo apt-get install redis redis-server -y
-sudo service redis-server start
-```
-
-## Step - 3 Connect to Redis
-```
-lindows@DTC-4Q563Y3:~$ redis-cli
-127.0.0.1:6379> ping
-PONG
