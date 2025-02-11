@@ -1,10 +1,5 @@
-"""
-Connector Factory
-Manages creation and caching of connector instances
-"""
-from typing import Dict, Type
-from connectors.base_connector import BaseConnector, CLOBConnector, AMMConnector
-from connectors.uniswap_v3 import UniswapV3Connector
+"""Connector Factory Implementation"""
+from connectors.base_connector import CLOBConnector, AMMConnector
 from connectors.binance import BinanceConnector
 from connectors.bitget import BitgetConnector
 from connectors.bybit import BybitConnector
@@ -25,15 +20,11 @@ from connectors.pancakeswap import PancakeSwapConnector
 from connectors.curve import CurveConnector
 from connectors.balancer import BalancerConnector
 from connectors.etcswap import ETCSwapConnector
-from logger_config import get_logger
-
-logger = get_logger("connector_factory")
 
 class ConnectorFactory:
-    """Factory for creating and managing connector instances"""
+    """Factory for creating exchange connectors"""
     
-    _connector_registry: Dict[str, Type[BaseConnector]] = {
-        'uniswap_v3': UniswapV3Connector,
+    CEX_MAPPING = {
         'binance': BinanceConnector,
         'bitget': BitgetConnector,
         'bybit': BybitConnector,
@@ -42,7 +33,10 @@ class ConnectorFactory:
         'hashkey': HashkeyConnector,
         'htx': HTXConnector,
         'okx': OKXConnector,
-        'bitmart': BitmartConnector,
+        'bitmart': BitmartConnector
+    }
+    
+    DEX_MAPPING = {
         'carbon': CarbonConnector,
         'openocean': OpenOceanConnector,
         'sushiswap': SushiswapConnector,
@@ -53,53 +47,26 @@ class ConnectorFactory:
         'pancakeswap': PancakeSwapConnector,
         'curve': CurveConnector,
         'balancer': BalancerConnector,
-        'etcswap': ETCSwapConnector,
+        'etcswap': ETCSwapConnector
     }
     
-    _instances: Dict[str, BaseConnector] = {}
-    
-    @classmethod
-    def get_connector(
-        cls,
-        connector_type: str,
-        chain: str,
-        rpc_url: str,
-        router_address: str,
-        factory_address: str
-    ) -> BaseConnector:
-        """Get connector instance"""
-        cache_key = f"{connector_type}_{chain}"
+    @staticmethod
+    def create_cex_connector(
+        exchange: str,
+        api_key: str,
+        api_secret: str
+    ) -> CLOBConnector:
+        """Create a CEX connector"""
+        if exchange not in ConnectorFactory.CEX_MAPPING:
+            raise ValueError(f"Unsupported CEX: {exchange}")
+        return ConnectorFactory.CEX_MAPPING[exchange](api_key, api_secret)
         
-        if cache_key in cls._instances:
-            return cls._instances[cache_key]
-            
-        if connector_type not in cls._connector_registry:
-            raise ValueError(f"Unsupported connector type: {connector_type}")
-            
-        connector_class = cls._connector_registry[connector_type]
-        
-        try:
-            instance = connector_class(
-                chain=chain,
-                rpc_url=rpc_url,
-                router_address=router_address,
-                factory_address=factory_address
-            )
-            cls._instances[cache_key] = instance
-            return instance
-        except Exception as e:
-            logger.error(f"Failed to create connector: {str(e)}")
-            raise
-            
-    @classmethod
-    def register_connector(
-        cls,
-        connector_type: str,
-        connector_class: Type[BaseConnector]
-    ):
-        """Register new connector type"""
-        if not issubclass(connector_class, (CLOBConnector, AMMConnector)):
-            raise ValueError("Connector must implement CLOBConnector or AMMConnector")
-            
-        cls._connector_registry[connector_type] = connector_class
-        logger.info(f"Registered new connector type: {connector_type}")
+    @staticmethod
+    def create_dex_connector(
+        dex: str,
+        rpc_url: str
+    ) -> AMMConnector:
+        """Create a DEX connector"""
+        if dex not in ConnectorFactory.DEX_MAPPING:
+            raise ValueError(f"Unsupported DEX: {dex}")
+        return ConnectorFactory.DEX_MAPPING[dex](rpc_url)

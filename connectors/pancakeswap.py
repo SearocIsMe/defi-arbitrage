@@ -1,54 +1,23 @@
-"""PancakeSwap DEX Connector"""
-from typing import Dict, Optional
-from web3.types import TxReceipt
-from eth_typing import ChecksumAddress
-from connectors.base_connector import DEXConnector
+"""PancakeSwap Connector Implementation"""
+from connectors.base_dex_connector import BaseDEXConnector
 
-class PancakeSwapConnector(DEXConnector):
-    """PancakeSwap DEX connector implementation"""
+class PancakeSwapConnector(BaseDEXConnector):
+    """PancakeSwap DEX connector"""
     
-    def __init__(self, chain: str, rpc_url: str, router_address: str, factory_address: str):
-        self.chain = chain
-        self.rpc_url = rpc_url
-        self.router_address = router_address
-        self.factory_address = factory_address
+    def __init__(self, rpc_url: str):
+        super().__init__(
+            chain="bsc",
+            rpc_url=rpc_url,
+            router_address="0x10ED43C718714eb63d5aA57B78B54704E256024E",
+            factory_address="0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73"
+        )
         
-    def get_name(self) -> str:
-        return "PancakeSwap"
-    
-    def get_chain(self) -> str:
-        return self.chain
-    
-    def get_available_pools(self) -> Dict[str, Dict]:
-        # Implementation to fetch available pools from PancakeSwap
+    def get_pool_fees(self, token_a: str, token_b: str) -> float:
+        """Get pool fees for a token pair"""
+        # PancakeSwap-specific fee calculation
         pass
-    
-    def get_balances(self, wallet_address: ChecksumAddress) -> Dict[str, float]:
-        # Implementation to fetch balances from PancakeSwap
-        pass
-    
-    def get_pool_liquidity(self, pool_id: str) -> Dict:
-        # Implementation to fetch pool liquidity from PancakeSwap
-        pass
-    
-    def swap_tokens(
-        self,
-        token_in: str,
-        token_out: str,
-        amount_in: float,
-        min_amount_out: float,
-        wallet_address: ChecksumAddress
-    ) -> TxReceipt:
-        # Implementation to swap tokens on PancakeSwap
-        pass
-    
-    def add_liquidity(
-        self,
-        token_a: str,
-        token_b: str,
-        amount_a: float,
-        amount_b: float,
-        wallet_address: ChecksumAddress
-    ) -> TxReceipt:
-        # Implementation to add liquidity on PancakeSwap
+        
+    def get_route(self, token_in: str, token_out: str) -> list[str]:
+        """Get optimal route for a swap"""
+        # PancakeSwap-specific route calculation
         pass
