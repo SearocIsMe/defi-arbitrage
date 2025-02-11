@@ -19,7 +19,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+quants-lab/
+gateway/
 # Virtual Environment
 venv/
 env/

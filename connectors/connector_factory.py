@@ -5,6 +5,26 @@ Manages creation and caching of connector instances
 from typing import Dict, Type
 from connectors.base_connector import BaseConnector, CLOBConnector, AMMConnector
 from connectors.uniswap_v3 import UniswapV3Connector
+from connectors.binance import BinanceConnector
+from connectors.bitget import BitgetConnector
+from connectors.bybit import BybitConnector
+from connectors.cube import CubeConnector
+from connectors.coinbase import CoinbaseConnector
+from connectors.hashkey import HashkeyConnector
+from connectors.htx import HTXConnector
+from connectors.okx import OKXConnector
+from connectors.bitmart import BitmartConnector
+from connectors.carbon import CarbonConnector
+from connectors.openocean import OpenOceanConnector
+from connectors.sushiswap import SushiswapConnector
+from connectors.tinyman import TinymanConnector
+from connectors.telos import TelosConnector
+from connectors.vvs import VVSConnector
+from connectors.xswap import XSwapConnector
+from connectors.pancakeswap import PancakeSwapConnector
+from connectors.curve import CurveConnector
+from connectors.balancer import BalancerConnector
+from connectors.etcswap import ETCSwapConnector
 from logger_config import get_logger
 
 logger = get_logger("connector_factory")
@@ -14,7 +34,26 @@ class ConnectorFactory:
     
     _connector_registry: Dict[str, Type[BaseConnector]] = {
         'uniswap_v3': UniswapV3Connector,
-        # Add other connectors here
+        'binance': BinanceConnector,
+        'bitget': BitgetConnector,
+        'bybit': BybitConnector,
+        'cube': CubeConnector,
+        'coinbase': CoinbaseConnector,
+        'hashkey': HashkeyConnector,
+        'htx': HTXConnector,
+        'okx': OKXConnector,
+        'bitmart': BitmartConnector,
+        'carbon': CarbonConnector,
+        'openocean': OpenOceanConnector,
+        'sushiswap': SushiswapConnector,
+        'tinyman': TinymanConnector,
+        'telos': TelosConnector,
+        'vvs': VVSConnector,
+        'xswap': XSwapConnector,
+        'pancakeswap': PancakeSwapConnector,
+        'curve': CurveConnector,
+        'balancer': BalancerConnector,
+        'etcswap': ETCSwapConnector,
     }
     
     _instances: Dict[str, BaseConnector] = {}
@@ -51,7 +90,7 @@ class ConnectorFactory:
         except Exception as e:
             logger.error(f"Failed to create connector: {str(e)}")
             raise
-        
+            
     @classmethod
     def register_connector(
         cls,
