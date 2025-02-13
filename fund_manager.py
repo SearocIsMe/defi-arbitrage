@@ -1,6 +1,7 @@
 from typing import Dict, Optional
 from web3 import Web3
 from decimal import Decimal
+from typing import List
 from dataclasses import dataclass
 from multi_source_gas_manager import GasManager
 

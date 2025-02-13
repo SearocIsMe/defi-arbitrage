@@ -229,3 +229,142 @@ pip install -r requirements.txt
 - aiohttp: 异步HTTP
 - redis: 数据缓存
 - fastapi: API服务
+
+## API文档
+
+### RESTful API接口
+
+#### 套利机会相关
+```
+GET /opportunities
+获取套利机会列表
+参数:
+- symbol: 交易对符号 (可选)
+- min_profit: 最小预期收益 (可选)
+- status: 套利状态过滤 (可选)
+- limit: 返回数量 (默认10,最大100)
+
+GET /opportunities/{opportunity_id}
+获取特定套利机会详情
+参数:
+- opportunity_id: 套利机会ID
+
+GET /symbols
+获取热门交易对列表
+参数:
+- limit: 返回数量 (默认20,最大100)
+
+GET /stats
+获取系统统计信息
+返回:
+- total_opportunities: 总机会数
+- average_profit: 平均收益
+- last_update: 最后更新时间
+```
+
+### API状态码
+- 200: 请求成功
+- 400: 请求参数错误
+- 404: 资源不存在
+- 500: 服务器内部错误
+
+### 数据模型
+```json
+ArbitrageOpportunity {
+    "id": "string",              // 套利机会ID
+    "timestamp": "datetime",     // 创建时间
+    "symbol": "string",          // 交易对符号
+    "source_exchange": "string", // 源交易所
+    "target_exchange": "string", // 目标交易所
+    "price_difference": "float", // 价格差异(%)
+    "estimated_profit": "float", // 预估收益(ETH)
+    "gas_cost": "float",        // Gas成本(ETH)
+    "transaction_details": {},   // 交易详情
+    "status": "enum"            // 状态(pending/simulated/executing/completed/failed)
+}
+```
+
+### Swagger文档
+- 访问 `/docs` 获取交互式API文档
+- 支持在线API测试
+- 包含详细的参数说明
+- 提供请求/响应示例
+
+### API使用示例
+```python
+import requests
+
+# 获取所有套利机会
+response = requests.get('http://localhost:8000/opportunities')
+opportunities = response.json()
+
+# 获取特定交易对的套利机会
+params = {'symbol': 'WETH/USDC', 'min_profit': 0.01}
+response = requests.get('http://localhost:8000/opportunities', params=params)
+filtered_opportunities = response.json()
+
+# 获取系统统计信息
+response = requests.get('http://localhost:8000/stats')
+stats = response.json()
+```
+
+## 性能指标
+- 最小套利差价: 0.5%
+- Gas成本覆盖: 预期收益 > 1.2倍Gas成本
+- 单次交易限额: 0.1-0.5 ETH
+- Gas价格预测准确率: >85%
+- 套利成功率: >90%
+- 平均收益率: >0.8%/笔
+- 交易对更新频率: 60秒
+- 套利检测延迟: <2秒/对
+
+
+# Install Redis on Windows
+
+## Step - 1
+ Install wsl in windows https://learn.microsoft.com/en-us/windows/wsl/install
+```
+wsl --install
+C:\Users\haipeng.jiang\Documents\00-learn\0-price-arbitrage\defi-arbitrage>wsl --install
+Ubuntu is already installed.
+Launching Ubuntu...
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 5.15.167.4-microsoft-standard-WSL2 x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Thu Feb  6 10:06:51 +08 2025
+
+  System load:  0.16                Processes:             72
+  Usage of /:   0.1% of 1006.85GB   Users logged in:       0
+  Memory usage: 12%                 IPv4 address for eth0: 172.27.131.191
+  Swap usage:   0%
+
+
+This message is shown once a day. To disable it please create the
+/home/lindows/.hushlogin file.
+lindows@DTC-4Q563Y3:~$ 
+
+lindows@DTC-4Q563Y3:~$, 7788
+```
+
+
+## Step - 2 Install Redis
+```
+curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
+
+sudo apt-get update
+sudo apt-get install redis redis-server -y
+sudo service redis-server start
+```
+
+## Step - 3 Connect to Redis
+```
+lindows@DTC-4Q563Y3:~$ redis-cli
+127.0.0.1:6379> ping
+PONG
+
+```
