@@ -9,6 +9,7 @@ from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
 from enum import Enum
 
+from fund_manager import FundManager, GasManager
 from logger_config import get_logger
 
 # Redis配置
@@ -124,6 +125,12 @@ class ArbitrageOpportunity(BaseModel):
             }
         }
 
+class WalletResponse(BaseModel):
+    """钱包创建响应模型"""
+    address: str = Field(..., description="钱包地址")
+    private_key: str = Field(..., description="钱包私钥 (仅用于演示)")
+    message: str = Field(..., description="安全提示信息")
+
 @app.get("/")
 async def root():
     return {"status": "running", "service": "DeFi Arbitrage API"}
@@ -178,6 +185,7 @@ async def get_arbitrage_opportunities(
     # 按预期收益排序
     opportunities.sort(key=lambda x: x.estimated_profit, reverse=True)
     return opportunities[:limit]
+
 @app.get(
     "/opportunities/{opportunity_id}", 
     response_model=ArbitrageOpportunity,
@@ -207,6 +215,7 @@ async def get_arbitrage_opportunity(
     except Exception as e:
         logger.error(f"Unexpected error in get_arbitrage_opportunity: {str(e)}")
         return {"error": "Internal server error"}
+
 @app.get(
     "/symbols",
     summary="获取热门交易对",
@@ -236,6 +245,7 @@ async def get_top_symbols(
     except Exception as e:
         logger.error(f"Unexpected error in get_top_symbols: {str(e)}")
         return {"error": "Internal server error"}
+
 @app.get(
     "/stats",
     summary="获取系统统计信息",
@@ -267,6 +277,33 @@ async def get_arbitrage_stats():
     except Exception as e:
         logger.error(f"Unexpected error in get_arbitrage_stats: {str(e)}")
         return {"error": "Internal server error"}
+
+@app.post(
+    "/wallets",
+    response_model=WalletResponse,
+    summary="创建新的以太坊钱包",
+    description="生成新的以太坊钱包地址和私钥"
+)
+async def create_wallet():
+    """创建新的以太坊钱包"""
+    try:
+        # 初始化Web3和GasManager
+        from web3 import Web3
+        from multi_source_gas_manager import GasManager
+        
+        w3 = Web3(Web3.HTTPProvider("http://localhost:8545"))  # 使用本地节点
+        gas_manager = GasManager()
+        fund_manager = FundManager(w3, gas_manager)
+        
+        wallet = fund_manager.create_wallet()
+        return {
+            "address": wallet["address"],
+            "private_key": wallet["private_key"],
+            "message": "请妥善保管私钥，生产环境不应暴露私钥"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 def store_arbitrage_opportunity(
     symbol: str,
     source_exchange: str,
@@ -315,6 +352,7 @@ def store_arbitrage_opportunity(
     except Exception as e:
         logger.error(f"Unexpected error in store_arbitrage_opportunity: {str(e)}")
         return None
+
 def store_top_trading_pairs(pairs: List[str]) -> bool:
     """存储交易量前N的交易对"""
     if not redis_client:

@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import List
 from dataclasses import dataclass
 from multi_source_gas_manager import GasManager
+from eth_account import Account
 
 @dataclass
 class Position:
@@ -24,6 +25,7 @@ class FundManager:
         self.max_leverage = Decimal('3')  # 最大杠杆倍数
         self.min_margin_ratio = Decimal('0.15')  # 最小保证金率
         self.maintenance_margin_ratio = Decimal('0.075')  # 维持保证金率
+        self.account = Account
         
         # 市场条件相关参数
         self.volatility_threshold = Decimal('0.02')  # 2%波动率阈值
@@ -34,6 +36,22 @@ class FundManager:
             'high': Decimal('0.4')
         }
         
+    def create_wallet(self) -> Dict[str, str]:
+        """创建新的以太坊钱包
+        
+        返回:
+            Dict: 包含地址和私钥的字典
+        """
+        try:
+            # 创建新账户
+            account = self.account.create()
+            return {
+                "address": account.address,
+                "private_key": account.key.hex()
+            }
+        except Exception as e:
+            raise Exception(f"Failed to create wallet: {str(e)}")
+
     async def get_wallet_balance(self, address: str) -> Decimal:
         """获取钱包ETH余额"""
         try:
