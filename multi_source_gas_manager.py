@@ -342,7 +342,7 @@ class GasManager:
         检查当前gas价格是否合理
         """
         gas_prices = self.get_optimal_gas_price()
-        return gas_prices and gas_prices['standard'] <= threshold_gwei
+        return gas_prices is not None and gas_prices.get('standard') is not None and gas_prices['standard'] <= threshold_gwei
 
     def get_gas_price_trend(self) -> Optional[str]:
         """
