@@ -6,7 +6,7 @@ from datetime import datetime
 from gql import gql, Client
 from logger_config import get_logger
 from api_service import store_arbitrage_opportunity, store_top_trading_pairs
-from chain_config import CHAIN_CONFIG, BRIDGE_CONFIG, GAS_LIMITS, DEFAULT_TOKENS
+from chain_config import CHAIN_CONFIG, BRIDGE_CONFIG, GAS_LIMITS, DEFAULT_TOKENS, validate_chain_config
 
 # 初始化logger
 logger = get_logger()
@@ -83,14 +83,14 @@ exchange_ids = ['binance', 'okx']  # 修正交易所名称拼写错误
 # 加载交易所API配置
 configurations = {
     'binance': {
-        'apiKey': 'your_binance_api_key',
-        'secretKey': 'your_binance_secret_key',
+        'apiKey': os.getenv('BINANCE_API_KEY'),
+            'secretKey': os.getenv('BINANCE_SECRET_KEY'),
         'options': {'adjustForTimeDifference': True}
     },
     'okx': {
-        'apiKey': 'your_okx_api_key',  # 确保使用OKX官方API名称
-        'secret': 'your_okx_secret_key',  # 修正参数名为secret
-        'password': 'your_trade_password',  # 添加OKX必需的交易密码
+        'apiKey': os.getenv('OKX_API_KEY'),  # 确保使用OKX官方API名称
+        'secret': os.getenv('OKX_SECRET_KEY'),  # 修正参数名为secret
+        'password': os.getenv('OKX_TRADE_PASSWORD'),  # 添加OKX必需的交易密码
         'options': {
             'adjustForTimeDifference': True,
             'recvWindow': 10000
