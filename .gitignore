@@ -25,6 +25,8 @@ gateway/
 venv/
 env/
 ENV/
+OpenJDK-23/
+Oracle_JDK-21/
 
 # IDE
 .idea/
