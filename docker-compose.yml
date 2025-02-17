@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  arbitrage-bot:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: defi-arbitrage-bot
+    environment:
+      - WALLET_ADDRESS=${WALLET_ADDRESS}
+      - WEB3_PROVIDER_URL=${WEB3_PROVIDER_URL}
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY}
+      - OKX_API_KEY=${OKX_API_KEY}
+      - OKX_SECRET_KEY=${OKX_SECRET_KEY}
+      - MIN_ARBITRAGE_PROFIT=${MIN_ARBITRAGE_PROFIT:-0.5}
+      - MAX_PAIRS_TO_TRACK=${MAX_PAIRS_TO_TRACK:-50}
+      - ARBITRAGE_CHECK_INTERVAL=${ARBITRAGE_CHECK_INTERVAL:-60}
+    volumes:
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    networks:
+      - arbitrage-network
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.30.3
+    container_name: arbitrage-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    networks:
+      - arbitrage-network
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.23.0
+    container_name: arbitrage-alertmanager
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    ports:
+      - "9093:9093"
+    networks:
+      - arbitrage-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:8.1.5
+    container_name: arbitrage-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana-dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana-provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    networks:
+      - arbitrage-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # Optional: Sentry for error tracking
+  sentry:
+    image: sentry:latest
+    container_name: arbitrage-sentry
+    environment:
+      - SENTRY_SECRET_KEY=${SENTRY_SECRET_KEY}
+      - SENTRY_POSTGRES_HOST=sentry-postgres
+      - SENTRY_DB_USER=sentry
+      - SENTRY_DB_PASSWORD=${SENTRY_DB_PASSWORD}
+    ports:
+      - "9000:9000"
+    networks:
+      - arbitrage-network
+    depends_on:
+      - sentry-postgres
+    restart: unless-stopped
+
+  sentry-postgres:
+    image: postgres:13
+    container_name: sentry-postgres
+    environment:
+      - POSTGRES_USER=sentry
+      - POSTGRES_PASSWORD=${SENTRY_DB_PASSWORD}
+      - POSTGRES_DB=sentry
+    volumes:
+      - sentry-postgres-data:/var/lib/postgresql/data
+    networks:
+      - arbitrage-network
+    restart: unless-stopped
+
+networks:
+  arbitrage-network:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  sentry-postgres-data:

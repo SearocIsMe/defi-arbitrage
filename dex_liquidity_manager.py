@@ -1,194 +1,253 @@
-"""
-Updated Dex Liquidity Manager using Connector System
-"""
 import asyncio
-from typing import List, Dict, Optional
-from connectors.connector_factory import ConnectorFactory
-from logger_config import get_logger
-from web3.types import TxReceipt
-from eth_typing import ChecksumAddress
+import logging
+from typing import Dict, List, Optional, Any
+from decimal import Decimal
 
-logger = get_logger("dex_liquidity_manager")
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from connectors.exceptions import ConnectorError, RateLimitError, NetworkError
+from web3 import Web3
+from multicall import Multicall
+
+from logger_config import get_logger
+from error_handler import ErrorHandler, ArbitrageError, ErrorSeverity
+from config_manager import config
+
+class LiquidityPool:
+    """
+    Represents a liquidity pool with detailed tracking
+    """
+    def __init__(
+        self, 
+        address: str, 
+        tokens: List[str], 
+        dex: str, 
+        chain: str
+    ):
+        """
+        Initialize a liquidity pool
+        
+        Args:
+            address (str): Pool contract address
+            tokens (List[str]): Tokens in the pool
+            dex (str): Decentralized exchange name
+            chain (str): Blockchain network
+        """
+        self.address = Web3.to_checksum_address(address)
+        self.tokens = tokens
+        self.dex = dex
+        self.chain = chain
+        
+        # Liquidity metrics
+        self.total_liquidity = Decimal('0')
+        self.token_reserves: Dict[str, Decimal] = {}
+        self.last_updated = None
+    
+    def update_reserves(self, reserves: Dict[str, Decimal]):
+        """
+        Update pool reserves
+        
+        Args:
+            reserves (Dict[str, Decimal]): Token reserves
+        """
+        self.token_reserves = reserves
+        self.total_liquidity = sum(reserves.values())
+        self.last_updated = asyncio.get_event_loop().time()
 
 class DexLiquidityManager:
-    """Manages DEX liquidity data using connector system"""
-    
-    def __init__(self):
-        self.connectors = {
-            'uniswap_v3': {
-                'chain': 'ethereum',
-                'rpc_url': 'https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID',
-                'router_address': '0xE592427A0AEce92De3Edee1F18E0157C05861564',
-                'factory_address': '0x1F98431c8aD98523631AE4a59f267346ea31F984'
-            },
-            # Add other DEX configurations here
-        }
+    """
+    Manages liquidity across multiple DEX platforms
+    """
+    def __init__(self, w3: Web3):
+        """
+        Initialize DexLiquidityManager
         
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=retry_if_exception_type((NetworkError, RateLimitError)),
-        before_sleep=lambda retry_state: logger.warning(
-            f"Retrying {retry_state.fn.__name__} after {retry_state.attempt_number} attempts"
+        Args:
+            w3 (Web3): Web3 instance for blockchain interactions
+        """
+        self.logger = get_logger('dex_liquidity_manager')
+        self.w3 = w3
+        
+        # Liquidity pool tracking
+        self.liquidity_pools: Dict[str, LiquidityPool] = {}
+        
+        # Configuration
+        self.min_liquidity_threshold = Decimal(
+            config.get('liquidity.min_threshold', '10000')
         )
-    )
-    async def get_connector(self, dex_name: str) -> Optional[BaseConnector]:
-        """Get connector instance for DEX"""
+    
+    @ErrorHandler.critical_error_handler
+    async def discover_liquidity_pools(
+        self, 
+        dex: str, 
+        chain: str, 
+        tokens: Optional[List[str]] = None
+    ) -> List[LiquidityPool]:
+        """
+        Discover liquidity pools for given parameters
+        
+        Args:
+            dex (str): Decentralized exchange name
+            chain (str): Blockchain network
+            tokens (List[str], optional): Specific tokens to filter
+        
+        Returns:
+            List[LiquidityPool]: Discovered liquidity pools
+        """
+        # Placeholder for pool discovery logic
+        # Would typically involve:
+        # 1. Querying DEX factory contract
+        # 2. Scanning blockchain events
+        # 3. Using external APIs or subgraphs
+        discovered_pools = []
+        
         try:
-            config = self.connectors.get(dex_name)
-            if not config:
-                logger.warning(f"No configuration found for DEX: {dex_name}")
-                return None
+            # Simulated pool discovery
+            pool_addresses = self._get_pool_addresses(dex, chain, tokens)
+            
+            for address in pool_addresses:
+                pool_tokens = self._get_pool_tokens(address)
                 
-            return ConnectorFactory.get_connector(
-                connector_type=dex_name,
-                chain=config['chain'],
-                rpc_url=config['rpc_url'],
-                router_address=config['router_address'],
-                factory_address=config['factory_address']
-            )
-        except ConnectorError as e:
-            logger.error(f"Failed to get connector for {dex_name}: {str(e)}")
-            return None
-            
-    async def get_top_pairs(self, dex_name: str) -> List[Dict]:
-        """Get top trading pairs for a DEX"""
-        connector = await self.get_connector(dex_name)
-        if not connector:
-            return []
-            
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry=retry_if_exception_type((NetworkError, RateLimitError)),
-            before_sleep=lambda retry_state: logger.warning(
-                f"Retrying get_top_pairs after {retry_state.attempt_number} attempts"
-            )
-        )
-        def _get_markets() -> Dict:
-            """Internal function to get markets with retry logic"""
-            return connector.get_available_markets()
-            
-        try:
-            markets = _get_markets()
-            if not markets:
-                logger.warning(f"No markets found for DEX: {dex_name}")
-                return []
+                if tokens and not any(t in pool_tokens for t in tokens):
+                    continue
                 
-            return [
-                {
-                    'dex': dex_name,
-                    'pair': pair,
-                    'tvl': float(market.get('tvl', 0)),
-                    'volume': float(market.get('volume', 0))
-                }
-                for pair, market in markets.items()
-            ]
-        except (ConnectorError, ValueError) as e:
-            logger.error(f"Failed to get top pairs for {dex_name}: {str(e)}")
-            return []
-            
-    async def get_price(self, dex_name: str, base_token: str, quote_token: str, amount: float) -> Optional[Tuple[float, float]]:
-        """Get price for a token pair"""
-        connector = await self.get_connector(dex_name)
-        if not connector:
-            return None
-            
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry=retry_if_exception_type((NetworkError, RateLimitError)),
-            before_sleep=lambda retry_state: logger.warning(
-                f"Retrying get_price after {retry_state.attempt_number} attempts"
-            )
-        )
-        def _get_price() -> Optional[Tuple[float, float]]:
-            """Internal function to get price with retry logic"""
-            return connector.get_price(base_token, quote_token, amount)
-            
-        try:
-            price = _get_price()
-            if not price or price[0] <= 0 or price[1] <= 0:
-                logger.warning(f"Invalid price returned for {base_token}/{quote_token} on {dex_name}")
-                return None
+                pool = LiquidityPool(
+                    address=address, 
+                    tokens=pool_tokens, 
+                    dex=dex, 
+                    chain=chain
+                )
                 
-            return price
-        except (ConnectorError, ValueError) as e:
-            logger.error(f"Price calculation failed for {dex_name}: {str(e)}")
-            return None
-            
-    async def execute_swap(
-        self,
-        dex_name: str,
-        base_token: str,
-        quote_token: str,
-        amount: float,
-        slippage: float,
-        wallet_address: ChecksumAddress
-    ) -> Optional[TxReceipt]:
-        """Execute token swap"""
-        connector = await self.get_connector(dex_name)
-        if not connector:
-            return None
-            
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry=retry_if_exception_type((NetworkError, RateLimitError)),
-            before_sleep=lambda retry_state: logger.warning(
-                f"Retrying execute_swap after {retry_state.attempt_number} attempts"
-            )
-        )
-        def _execute_swap() -> Optional[TxReceipt]:
-            """Internal function to execute swap with retry logic"""
-            return connector.swap_tokens(
-                base_token,
-                quote_token,
-                amount,
-                slippage,
-                wallet_address
-            )
-            
-        try:
-            tx_receipt = _execute_swap()
-            if not tx_receipt:
-                logger.error(f"Swap transaction failed for {base_token}/{quote_token} on {dex_name}")
-                return None
+                # Update pool reserves
+                reserves = self._fetch_pool_reserves(address)
+                pool.update_reserves(reserves)
                 
-            logger.info(f"Swap executed successfully: {tx_receipt.transactionHash.hex()}")
-            return tx_receipt
-        except (ConnectorError, ValueError) as e:
-            logger.error(f"Swap execution failed for {dex_name}: {str(e)}")
-            return None
-            
-    async def get_top_trading_pairs(self) -> List[str]:
-        """Get top trading pairs across all DEXs"""
-        try:
-            tasks = [
-                self.get_top_pairs(dex_name)
-                for dex_name in self.connectors.keys()
-            ]
-            results = await asyncio.gather(*tasks)
-            
-            # Merge and sort pairs
-            all_pairs = [pair for sublist in results for pair in sublist]
-            sorted_pairs = sorted(
-                all_pairs,
-                key=lambda x: (x['tvl'] * 0.7 + x['volume'] * 0.3),
-                reverse=True
-            )
-            
-            # Extract unique pairs
-            unique_pairs = []
-            seen_pairs = set()
-            for pair in sorted_pairs:
-                if pair['pair'] not in seen_pairs:
-                    seen_pairs.add(pair['pair'])
-                    unique_pairs.append(pair['pair'])
-                    
-            return unique_pairs[:30]
+                # Store pool
+                self.liquidity_pools[address] = pool
+                discovered_pools.append(pool)
+        
         except Exception as e:
-            logger.error(f"Failed to get top trading pairs: {str(e)}")
-            return ['WETH/USDC', 'WBTC/USDT', 'ETH/USDT']
+            self.logger.error(f"Error discovering liquidity pools: {e}")
+            raise ArbitrageError(
+                f"Liquidity pool discovery failed for {dex} on {chain}",
+                severity=ErrorSeverity.HIGH
+            )
+        
+        return discovered_pools
+    
+    def _get_pool_addresses(
+        self, 
+        dex: str, 
+        chain: str, 
+        tokens: Optional[List[str]] = None
+    ) -> List[str]:
+        """
+        Get pool addresses for a specific DEX and chain
+        
+        Args:
+            dex (str): Decentralized exchange name
+            chain (str): Blockchain network
+            tokens (List[str], optional): Specific tokens to filter
+        
+        Returns:
+            List[str]: Pool contract addresses
+        """
+        # Placeholder implementation
+        # Would typically query DEX factory contract or use external API
+        return [
+            '0x1234567890123456789012345678901234567890',
+            '0x0987654321098765432109876543210987654321'
+        ]
+    
+    def _get_pool_tokens(self, pool_address: str) -> List[str]:
+        """
+        Get tokens for a specific pool
+        
+        Args:
+            pool_address (str): Pool contract address
+        
+        Returns:
+            List[str]: Tokens in the pool
+        """
+        # Placeholder implementation
+        # Would typically call pool contract to get tokens
+        return ['ETH', 'USDC']
+    
+    def _fetch_pool_reserves(self, pool_address: str) -> Dict[str, Decimal]:
+        """
+        Fetch current reserves for a liquidity pool
+        
+        Args:
+            pool_address (str): Pool contract address
+        
+        Returns:
+            Dict[str, Decimal]: Token reserves
+        """
+        # Placeholder implementation
+        # Would typically use multicall or individual contract calls
+        return {
+            'ETH': Decimal('100'),
+            'USDC': Decimal('200000')
+        }
+    
+    def get_top_liquidity_pools(
+        self, 
+        limit: int = 10, 
+        min_liquidity: Optional[Decimal] = None
+    ) -> List[LiquidityPool]:
+        """
+        Get top liquidity pools by total liquidity
+        
+        Args:
+            limit (int): Number of top pools to return
+            min_liquidity (Decimal, optional): Minimum liquidity threshold
+        
+        Returns:
+            List[LiquidityPool]: Top liquidity pools
+        """
+        min_liquidity = min_liquidity or self.min_liquidity_threshold
+        
+        # Filter and sort pools
+        filtered_pools = [
+            pool for pool in self.liquidity_pools.values()
+            if pool.total_liquidity >= min_liquidity
+        ]
+        
+        # Sort by total liquidity in descending order
+        sorted_pools = sorted(
+            filtered_pools, 
+            key=lambda p: p.total_liquidity, 
+            reverse=True
+        )
+        
+        return sorted_pools[:limit]
+    
+    async def monitor_liquidity_changes(self):
+        """
+        Continuously monitor liquidity pool changes
+        """
+        while True:
+            try:
+                # Refresh liquidity for existing pools
+                for pool in self.liquidity_pools.values():
+                    reserves = self._fetch_pool_reserves(pool.address)
+                    pool.update_reserves(reserves)
+                
+                # Check for significant liquidity changes
+                self._check_liquidity_anomalies()
+                
+                # Wait before next iteration
+                await asyncio.sleep(300)  # 5-minute interval
+            
+            except Exception as e:
+                self.logger.error(f"Liquidity monitoring error: {e}")
+                await asyncio.sleep(60)
+    
+    def _check_liquidity_anomalies(self):
+        """
+        Check for significant liquidity changes
+        """
+        for pool in self.liquidity_pools.values():
+            # Example: Check for sudden large liquidity changes
+            if pool.total_liquidity > self.min_liquidity_threshold * 2:
+                self.logger.warning(
+                    f"Significant liquidity increase detected: "
+                    f"{pool.dex} - {pool.address}"
+                )

@@ -1,117 +1,126 @@
-"""
-Base Connector Interfaces
-Defines standard interfaces for CLOB and AMM connectors
-"""
+"""Base Connector Implementation"""
+from typing import Dict, Optional, Any
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Tuple
-from web3.types import TxReceipt
-from eth_typing import ChecksumAddress
-from eth_utils import to_checksum_address
-
-class BaseConnectorError(Exception):
-    """Base exception for connector errors"""
-    pass
-
-class PriceError(BaseConnectorError):
-    """Exception for price-related errors"""
-    pass
-
-class TradeError(BaseConnectorError):
-    """Exception for trade execution errors"""
-    pass
+from web3 import Web3
 
 class BaseConnector(ABC):
-    """Base interface for all connectors"""
+    """Abstract base class for all exchange connectors"""
+    
+    def __init__(
+        self, 
+        w3: Web3, 
+        config: Dict[str, Any]
+    ):
+        """
+        Initialize base connector
+        
+        Args:
+            w3 (Web3): Web3 instance for blockchain interactions
+            config (Dict[str, Any]): Configuration for the connector
+        """
+        self.w3 = w3
+        self.config = config
     
     @abstractmethod
     def get_name(self) -> str:
-        """Get connector name"""
+        """
+        Get a human-readable name for this connector
+        
+        Returns:
+            str: Name of the connector
+        """
         pass
     
     @abstractmethod
-    def get_chain(self) -> str:
-        """Get chain name"""
+    async def fetch_market_data(self) -> Dict[str, Any]:
+        """
+        Fetch current market data
+        
+        Returns:
+            Dict[str, Any]: Market data for supported assets
+        """
         pass
     
-    @abstractmethod
-    def get_available_markets(self) -> Dict[str, Dict]:
-        """Get available trading markets"""
-        pass
-    
-    @abstractmethod
-    def get_balances(self, wallet_address: ChecksumAddress) -> Dict[str, float]:
-        """Get token balances for wallet"""
-        pass
-
-class CLOBConnector(BaseConnector):
-    """Central Limit Order Book Connector Interface"""
-    
-    @abstractmethod
-    def get_order_book(self, market: str) -> Dict:
-        """Get order book for market"""
-        pass
-    
-    @abstractmethod
-    def place_limit_order(
-        self,
-        market: str,
-        side: str,
-        price: float,
-        amount: float,
-        wallet_address: ChecksumAddress
-    ) -> str:
-        """Place limit order"""
-        pass
-    
-    @abstractmethod
-    def cancel_order(self, order_id: str) -> bool:
-        """Cancel order"""
-        pass
+    def _validate_address(self, address: str) -> bool:
+        """
+        Validate Ethereum address
+        
+        Args:
+            address (str): Ethereum address to validate
+        
+        Returns:
+            bool: Whether the address is valid
+        """
+        try:
+            return self.w3.is_address(address)
+        except Exception:
+            return False
 
 class AMMConnector(BaseConnector):
-    """Automated Market Maker Connector Interface"""
+    """Abstract base class for Automated Market Maker connectors"""
     
     @abstractmethod
-    def get_price(
-        self,
-        base_token: str,
-        quote_token: str,
-        amount: float
-    ) -> Tuple[float, float]:
-        """Get price for swap"""
+    async def get_pool_reserves(
+        self, 
+        token_a: str, 
+        token_b: str
+    ) -> Dict[str, float]:
+        """
+        Get pool reserves for a specific token pair
+        
+        Args:
+            token_a (str): Address of first token
+            token_b (str): Address of second token
+        
+        Returns:
+            Dict[str, float]: Reserves for the token pair
+        """
         pass
     
     @abstractmethod
-    def swap_tokens(
+    async def swap_tokens(
         self,
-        base_token: str,
-        quote_token: str,
-        amount: float,
-        slippage: float,
-        wallet_address: ChecksumAddress
-    ) -> TxReceipt:
-        """Execute token swap"""
+        token_in: str,
+        token_out: str,
+        amount_in: float,
+        min_amount_out: float,
+        sender_address: str
+    ) -> Dict[str, Any]:
+        """
+        Execute a token swap
+        
+        Args:
+            token_in (str): Address of input token
+            token_out (str): Address of output token
+            amount_in (float): Amount of input token to swap
+            min_amount_out (float): Minimum acceptable output amount
+            sender_address (str): Address executing the swap
+        
+        Returns:
+            Dict[str, Any]: Swap transaction details
+        """
         pass
     
     @abstractmethod
-    def add_liquidity(
+    async def add_liquidity(
         self,
         token_a: str,
         token_b: str,
         amount_a: float,
         amount_b: float,
-        wallet_address: ChecksumAddress
-    ) -> TxReceipt:
-        """Add liquidity to pool"""
-        pass
-    
-    @abstractmethod
-    def remove_liquidity(
-        self,
-        token_a: str,
-        token_b: str,
-        liquidity: float,
-        wallet_address: ChecksumAddress
-    ) -> TxReceipt:
-        """Remove liquidity from pool"""
+        sender_address: str
+    ) -> Dict[str, Any]:
+        """
+        Add liquidity to a token pair pool
+        
+        Args:
+            token_a (str): Address of first token
+            token_b (str): Address of second token
+            amount_a (float): Amount of first token to add
+            amount_b (float): Amount of second token to add
+            sender_address (str): Address providing liquidity
+        
+        Returns:
+            Dict[str, Any]: Liquidity addition transaction details
+        """
         pass

@@ -1,4 +1,4 @@
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 import os
 import time
 import requests
@@ -8,10 +8,15 @@ import json
 from datetime import datetime, timedelta
 import statistics
 
+class BlockData:
+    """Ethereum block data"""
+    def __init__(self, baseFeePerGas: int):
+        self.baseFeePerGas: int = int(baseFeePerGas)
+
 class GasDataSource(ABC):
     """Gas价格数据源基类"""
     @abstractmethod
-    def get_gas_price(self) -> Optional[Dict]:
+    def get_gas_price(self) -> Optional[Dict[str, int]]:
         """
         获取gas价格
         返回: {
@@ -26,7 +31,7 @@ class GasDataSource(ABC):
 class Web3GasSource(GasDataSource):
     """通过Web3连接获取gas价格"""
     def __init__(self, rpc_url: str):
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+        self.w3: Web3 = Web3(Web3.HTTPProvider(rpc_url))
 
     def get_gas_price(self) -> Optional[Dict]:
         try:
@@ -53,7 +58,7 @@ class Web3GasSource(GasDataSource):
 class EtherscanGasSource(GasDataSource):
     """通过Etherscan API获取gas价格"""
     def __init__(self, api_key: str):
-        self.api_key = api_key
+        self.api_key: str = api_key
         self.base_url = "https://api.etherscan.io/api"
         self.history_url = "https://api.etherscan.io/api?module=stats&action=dailyavggasprice"
 
@@ -98,9 +103,9 @@ class EtherscanGasSource(GasDataSource):
 class OneInchGasSource(GasDataSource):
     """通过1inch API获取gas价格"""
     def __init__(self):
-        self.base_url = "https://api.1inch.io/v5.0/1/gas-price"
+        self.base_url: str = "https://api.1inch.io/v5.0/1/gas-price"
 
-    def get_gas_price(self) -> Optional[Dict]:
+    def get_gas_price(self) -> Optional[Dict[str, int]]:
         try:
             response = requests.get(self.base_url)
             data = response.json()
@@ -118,12 +123,14 @@ class GasPredictionService:
     """Gas价格预测服务"""
     def __init__(self, data_file: str = 'gas_price_history.json'):
         self.data_file = data_file
-        self.history_data = self._load_history()
-        self.max_history_days = 7
-        self.ema_alpha = 0.2  # EMA平滑因子
-        self.volatility_threshold = 0.3  # 波动率阈值
-        self.spike_threshold = 0.5  # 价格突变阈值
-        self.ema_values = {'fast': None, 'standard': None, 'slow': None}
+        self.history_data: List[Dict] = self._load_history()
+        self.max_history_days: int = 7
+        self.ema_alpha: float = 0.2  # EMA平滑因子
+        self.volatility_threshold: float = 0.3  # 波动率阈值
+        self.spike_threshold: float = 0.5  # 价格突变阈值
+        self.ema_values: Dict[str, Optional[int]] = {
+            'fast': None, 'standard': None, 'slow': None
+        }
 
     def _load_history(self) -> List[Dict]:
         """加载历史数据"""
@@ -143,7 +150,7 @@ class GasPredictionService:
         except Exception as e:
             print(f"Error saving gas price history: {e}")
 
-    def add_price_data(self, price_data: Dict):
+    def add_price_data(self, price_data: Dict[str, Any]) -> None:
         """添加新的价格数据到历史记录"""
         self.history_data.append({
             **price_data,
@@ -169,7 +176,7 @@ class GasPredictionService:
         avg_price = statistics.mean(historical_prices)
         return abs(current_price - avg_price) / avg_price > self.spike_threshold
 
-    def update_ema(self, speed: str, new_price: int):
+    def update_ema(self, speed: str, new_price: int) -> None:
         """更新指数移动平均"""
         if self.ema_values[speed] is None:
             self.ema_values[speed] = new_price
@@ -179,18 +186,22 @@ class GasPredictionService:
                 self.ema_values[speed] * (1 - self.ema_alpha)
             )
 
-    def predict_gas_price(self) -> Optional[Dict]:
-        """预测未来gas价格,使用EMA和波动率分析"""
+    def predict_gas_price(self) -> Optional[Dict[str, Optional[int]]]:
+        """预测未来gas价格,使用EMA和波动率分析
+        Returns:
+            Dict[str, Optional[int]]: 预测的gas价格，包含'fast', 'standard', 'slow'三个级别
+        """
         if not self.history_data:
             return None
 
         try:
             current_hour = datetime.now().hour
-            relevant_prices = {
+            relevant_prices: Dict[str, List[int]] = {
                 'fast': [],
                 'standard': [],
                 'slow': []
             }
+            prediction: Dict[str, Optional[int]] = {}
 
             # 收集相关数据
             for data in self.history_data:
@@ -212,6 +223,7 @@ class GasPredictionService:
 
                     # 检查波动率
                     volatility = self.calculate_volatility(relevant_prices[speed])
+                    self.ema_values[speed] = None
                     is_spike = self.detect_price_spike(
                         base_prediction, 
                         relevant_prices[speed][:-1]
