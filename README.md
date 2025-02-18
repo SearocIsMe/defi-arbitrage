@@ -9,6 +9,11 @@ An advanced, multi-chain cryptocurrency arbitrage detection and execution system
 ### Arbitrage Detection
 - Multi-chain support (Ethereum, Binance Smart Chain, Polygon)
 - Cross-exchange price comparison
+    For cross-chain arbitrage skipping:
+        Indicates that cross-chain arbitrage is disabled
+    For cross-DEX arbitrage skipping:
+        Shows when DEX-to-DEX arbitrage is disabled
+
 - Real-time opportunity tracking
 - Configurable profit thresholds
 

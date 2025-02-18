@@ -5,12 +5,20 @@ cex_exchanges:
       - spot
       - futures
       - options
+    api_credentials:
+      api_key: ${OKX_API_KEY}
+      secret_key: ${OKX_SECRET_KEY}
+
   - name: binance
     api_type: ccxt
     supported_markets:
       - spot
       - futures
       - margin
+    api_credentials:
+      api_key: ${BINANCE_API_KEY}
+      secret_key: ${BINANCE_SECRET_KEY}
+
   - name: coinbase
     api_type: ccxt
     supported_markets:

@@ -46,6 +46,10 @@ class ArbitrageDetector:
         # Configuration parameters
         self.min_arbitrage_profit = float(os.getenv('MIN_ARBITRAGE_PROFIT', 0.5))
         self.max_pairs_to_track = int(os.getenv('MAX_PAIRS_TO_TRACK', 50))
+        
+        # Arbitrage settings
+        self.cross_chain_arbitrage_enabled = os.getenv('CROSS_CHAIN_ARBITRAGE_ENABLED', 'true').lower() == 'true'
+        self.cross_dex_arbitrage_enabled = os.getenv('CROSS_DEX_ARBITRAGE_ENABLED', 'true').lower() == 'true'
     
     def _validate_environment(self):
         """
@@ -151,6 +155,18 @@ class ArbitrageDetector:
         Returns:
             list: List of arbitrage opportunities
         """
+        # Determine market types
+        def get_market_type(market_name):
+            cex_markets = ['okx', 'binance', 'coinbase']
+            dex_markets = ['uniswap', 'pancakeswap', 'sushiswap']
+            
+            if market_name in cex_markets:
+                return 'cex'
+            elif market_name in dex_markets:
+                return 'dex'
+            else:
+                return 'unknown'
+        
         opportunities = []
         logger.debug(f"Starting arbitrage detection with {len(market_data)} markets")
         logger.debug(f"Markets: {list(market_data.keys())}")
@@ -158,7 +174,29 @@ class ArbitrageDetector:
         # Cross-market price comparison
         for source_market, source_pairs in market_data.items():
             for dest_market, dest_pairs in market_data.items():
+                # Skip same market comparisons
                 if source_market == dest_market:
+                    continue
+                
+                # Determine market types
+                source_market_type = get_market_type(source_market)
+                dest_market_type = get_market_type(dest_market)
+                
+                # Skip cross-chain or cross-DEX arbitrage if disabled
+                if not self.cross_chain_arbitrage_enabled and source_market_type != dest_market_type:
+                    logger.debug(
+                        f"Skipping arbitrage between {source_market} and {dest_market}: "
+                        f"Cross-chain arbitrage is disabled. "
+                        f"Source market type: {source_market_type}, Destination market type: {dest_market_type}"
+                    )
+                    continue
+                
+                if not self.cross_dex_arbitrage_enabled and source_market_type == 'dex' and dest_market_type == 'dex':
+                    logger.debug(
+                        f"Skipping arbitrage between {source_market} and {dest_market}: "
+                        f"Cross-DEX arbitrage is disabled. "
+                        f"Source market type: {source_market_type}, Destination market type: {dest_market_type}"
+                    )
                     continue
                 
                 for token_pair, source_price_data in source_pairs.items():
@@ -183,8 +221,7 @@ class ArbitrageDetector:
                                     'profit_percentage': profit_percentage,
                                     'timestamp': datetime.now().isoformat()
                                 }
-        
-                        
+                
                                 logger.info(f"Arbitrage Opportunity Detected: {opportunity}")
                                 opportunities.append(opportunity)
                             else:
