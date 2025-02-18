@@ -74,9 +74,14 @@ class ArbitrageDetector:
     def _initialize_web3(self):
         """Initialize Web3 provider with fallback mechanism and chain configuration support"""
         # Use chain configuration to get RPC URLs
-        provider_urls = [
-            os.getenv('WEB3_PROVIDER_URL', 'http://localhost:8545')
-        ]
+        web3_provider_url = os.getenv('WEB3_PROVIDER_URL')
+        
+        if not web3_provider_url:
+            error_msg = "WEB3_PROVIDER_URL environment variable is not set. Cannot initialize Web3 connection."
+            logger.error(error_msg)
+            raise EnvironmentError(error_msg)
+        
+        provider_urls = [web3_provider_url]
         
         # Add fallback RPC URLs from chain configuration
         for chain_name, chain_config in CHAIN_CONFIG.items():
@@ -137,6 +142,8 @@ class ArbitrageDetector:
     async def detect_arbitrage_opportunities(self, market_data):
         """
         Detect potential arbitrage opportunities across multiple markets
+
+        Logs detailed information about the arbitrage detection process
         
         Args:
             market_data (dict): Market data from different exchanges
@@ -145,6 +152,8 @@ class ArbitrageDetector:
             list: List of arbitrage opportunities
         """
         opportunities = []
+        logger.debug(f"Starting arbitrage detection with {len(market_data)} markets")
+        logger.debug(f"Markets: {list(market_data.keys())}")
         
         # Cross-market price comparison
         for source_market, source_pairs in market_data.items():
@@ -165,7 +174,7 @@ class ArbitrageDetector:
                             profit_percentage = abs((source_price - dest_price) / source_price * 100)
                             
                             if profit_percentage > self.min_arbitrage_profit:
-                                opportunities.append({
+                                opportunity = {
                                     'source_market': source_market,
                                     'dest_market': dest_market,
                                     'token_pair': token_pair,
@@ -173,8 +182,18 @@ class ArbitrageDetector:
                                     'dest_price': dest_price,
                                     'profit_percentage': profit_percentage,
                                     'timestamp': datetime.now().isoformat()
-                                })
+                                }
         
+                        
+                                logger.info(f"Arbitrage Opportunity Detected: {opportunity}")
+                                opportunities.append(opportunity)
+                            else:
+                                logger.debug(
+                                    f"No arbitrage opportunity for {token_pair} between {source_market} and {dest_market}: "
+                                    f"Profit {profit_percentage:.2f}% < {self.min_arbitrage_profit}%"
+                                )
+        
+        logger.debug(f"Arbitrage detection complete. Found {len(opportunities)} opportunities")
         return opportunities
     
     async def main_arbitrage_loop(self):
