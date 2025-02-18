@@ -1,6 +1,6 @@
 """Connector Factory Implementation with Multi-Exchange Support"""
 from typing import Union, Optional
-from connectors.okx import MultiExchangeConnector
+from connectors.multi_exchange_connector import MultiExchangeConnector
 
 class ConnectorFactory:
     """Factory for creating multi-exchange connectors"""
