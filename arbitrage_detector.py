@@ -16,7 +16,7 @@ from web3 import Web3
 # Import local modules
 from logger_config import get_logger
 from api_service import store_arbitrage_opportunity, store_top_trading_pairs
-from chain_config import CHAIN_CONFIG, BRIDGE_CONFIG, GAS_LIMITS, DEFAULT_TOKENS, validate_chain_config
+from chain_config import CHAIN_CONFIG, validate_chain_config
 from multi_source_gas_manager import GasManager
 from fund_manager import FundManager, Position
 from connectors.connector_factory import ConnectorFactory
@@ -27,7 +27,7 @@ logger = get_logger()
 class ArbitrageDetector:
     def __init__(self, wallet_address):
         """
-        Initialize ArbitrageDetector with wallet and exchange connections
+        Initialize ArbitrageDetector with wallet and multi-exchange connections
         
         Args:
             wallet_address (str): User's wallet address for transactions
@@ -40,14 +40,13 @@ class ArbitrageDetector:
         self.gas_manager = GasManager()
         self.fund_manager = FundManager(self.w3, self.gas_manager)
         
-        # Initialize CEX and DEX connectors
-        self.cex_connectors = self._initialize_cex_connectors()
-        self.dex_connectors = self._initialize_dex_connectors()
+        # Initialize multi-exchange connector
+        self.multi_exchange_connector = self._initialize_multi_exchange_connector()
         
         # Configuration parameters
         self.min_arbitrage_profit = float(os.getenv('MIN_ARBITRAGE_PROFIT', 0.5))
         self.max_pairs_to_track = int(os.getenv('MAX_PAIRS_TO_TRACK', 50))
-        
+    
     def _validate_environment(self):
         """
         Validate critical environment variables and configurations
@@ -95,87 +94,49 @@ class ArbitrageDetector:
         
         raise ConnectionError("Could not establish Web3 connection to any provider")
     
-    def _initialize_cex_connectors(self):
-        """Initialize CEX connectors dynamically with configuration support"""
-        cex_connectors = {}
-        cex_configs = {
-            'binance': {
-                'api_key': os.getenv('BINANCE_API_KEY'),
-                'api_secret': os.getenv('BINANCE_SECRET_KEY')
-            },
-            'okx': {
-                'api_key': os.getenv('OKX_API_KEY'),
-                'api_secret': os.getenv('OKX_SECRET_KEY')
-            }
-        }
+    def _initialize_multi_exchange_connector(self):
+        """
+        Initialize multi-exchange connector
         
-        for exchange, config in cex_configs.items():
-            try:
-                if config['api_key'] and config['api_secret']:
-                    connector = ConnectorFactory.create_cex_connector(
-                        exchange, 
-                        config['api_key'], 
-                        config['api_secret']
-                    )
-                    cex_connectors[exchange] = connector
-                    logger.info(f"Initialized CEX connector for {exchange}")
-            except Exception as e:
-                logger.error(f"Failed to initialize {exchange} connector: {e}")
-        
-        return cex_connectors
-    
-    def _initialize_dex_connectors(self):
-        """Initialize DEX connectors with support for chain configuration"""
-        dex_connectors = {}
-        
-        # Iterate through chain configuration to initialize DEX connectors
-        for chain_name, chain_config in CHAIN_CONFIG.items():
-            for dex_name, dex_config in chain_config.get('dexes', {}).items():
-                try:
-                    # Use chain-specific RPC URL or fallback
-                    rpc_url = dex_config.get('rpc_url', os.getenv('WEB3_PROVIDER_URL', 'http://localhost:8545'))
-                    
-                    connector = ConnectorFactory.create_dex_connector(dex_name, rpc_url)
-                    dex_connectors[f"{chain_name}_{dex_name}"] = connector
-                    logger.info(f"Initialized DEX connector for {chain_name} - {dex_name}")
-                except Exception as e:
-                    logger.error(f"Failed to initialize {dex_name} on {chain_name}: {e}")
-        
-        return dex_connectors
+        Returns:
+            MultiExchangeConnector: Initialized connector with multiple exchanges
+        """
+        try:
+            # Use ConnectorFactory to create multi-exchange connector
+            connector = ConnectorFactory.create_connector()
+            logger.info("Initialized multi-exchange connector")
+            return connector
+        except Exception as e:
+            logger.error(f"Failed to initialize multi-exchange connector: {e}")
+            return None
     
     async def fetch_top_trading_pairs(self):
         """
-        Dynamically fetch top trading pairs from CEX and DEX markets
+        Dynamically fetch top trading pairs from multiple exchanges
         
         Returns:
             dict: Top trading pairs with their market data
         """
-        top_pairs = {}
+        if not self.multi_exchange_connector:
+            logger.warning("Multi-exchange connector not initialized")
+            return {}
         
-        # Fetch from CEX markets
-        for exchange_name, connector in self.cex_connectors.items():
-            try:
-                pairs = await connector.fetch_top_trading_pairs(self.max_pairs_to_track)
-                top_pairs[exchange_name] = pairs
-            except Exception as e:
-                logger.error(f"Error fetching top pairs from {exchange_name}: {e}")
-        
-        # Fetch from DEX markets
-        for dex_name, connector in self.dex_connectors.items():
-            try:
-                pairs = await connector.fetch_top_trading_pairs(self.max_pairs_to_track)
-                top_pairs[dex_name] = pairs
-            except Exception as e:
-                logger.error(f"Error fetching top pairs from {dex_name}: {e}")
-        
-        # Store top trading pairs for monitoring
-        store_top_trading_pairs(top_pairs)
-        
-        return top_pairs
+        try:
+            top_pairs = await self.multi_exchange_connector.fetch_top_trading_pairs(
+                limit=self.max_pairs_to_track
+            )
+            
+            # Store top trading pairs for monitoring
+            store_top_trading_pairs(top_pairs)
+            
+            return top_pairs
+        except Exception as e:
+            logger.error(f"Error fetching top trading pairs: {e}")
+            return {}
     
     async def detect_arbitrage_opportunities(self, market_data):
         """
-        Detect potential arbitrage opportunities across CEX and DEX markets
+        Detect potential arbitrage opportunities across multiple markets
         
         Args:
             market_data (dict): Market data from different exchanges
@@ -191,23 +152,28 @@ class ArbitrageDetector:
                 if source_market == dest_market:
                     continue
                 
-                for token_pair, source_price in source_pairs.items():
+                for token_pair, source_price_data in source_pairs.items():
                     if token_pair in dest_pairs:
-                        dest_price = dest_pairs[token_pair]
+                        dest_price_data = dest_pairs[token_pair]
+                        
+                        # Extract last price for comparison
+                        source_price = source_price_data.get('last_price', 0)
+                        dest_price = dest_price_data.get('last_price', 0)
                         
                         # Calculate potential profit percentage
-                        profit_percentage = abs((source_price - dest_price) / source_price * 100)
-                        
-                        if profit_percentage > self.min_arbitrage_profit:
-                            opportunities.append({
-                                'source_market': source_market,
-                                'dest_market': dest_market,
-                                'token_pair': token_pair,
-                                'source_price': source_price,
-                                'dest_price': dest_price,
-                                'profit_percentage': profit_percentage,
-                                'timestamp': datetime.now().isoformat()
-                            })
+                        if source_price > 0 and dest_price > 0:
+                            profit_percentage = abs((source_price - dest_price) / source_price * 100)
+                            
+                            if profit_percentage > self.min_arbitrage_profit:
+                                opportunities.append({
+                                    'source_market': source_market,
+                                    'dest_market': dest_market,
+                                    'token_pair': token_pair,
+                                    'source_price': source_price,
+                                    'dest_price': dest_price,
+                                    'profit_percentage': profit_percentage,
+                                    'timestamp': datetime.now().isoformat()
+                                })
         
         return opportunities
     

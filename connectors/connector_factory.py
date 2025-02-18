@@ -1,72 +1,86 @@
-"""Connector Factory Implementation"""
-from connectors.base_connector import CLOBConnector, AMMConnector
-from connectors.binance import BinanceConnector
-from connectors.bitget import BitgetConnector
-from connectors.bybit import BybitConnector
-from connectors.cube import CubeConnector
-from connectors.coinbase import CoinbaseConnector
-from connectors.hashkey import HashkeyConnector
-from connectors.htx import HTXConnector
-from connectors.okx import OKXConnector
-from connectors.bitmart import BitmartConnector
-from connectors.carbon import CarbonConnector
-from connectors.openocean import OpenOceanConnector
-from connectors.sushiswap import SushiswapConnector
-from connectors.tinyman import TinymanConnector
-from connectors.telos import TelosConnector
-from connectors.vvs import VVSConnector
-from connectors.xswap import XSwapConnector
-from connectors.pancakeswap import PancakeSwapConnector
-from connectors.curve import CurveConnector
-from connectors.balancer import BalancerConnector
-from connectors.etcswap import ETCSwapConnector
+"""Connector Factory Implementation with Multi-Exchange Support"""
+from typing import Union, Optional
+from connectors.okx import MultiExchangeConnector
 
 class ConnectorFactory:
-    """Factory for creating exchange connectors"""
-    
-    CEX_MAPPING = {
-        'binance': BinanceConnector,
-        'bitget': BitgetConnector,
-        'bybit': BybitConnector,
-        'cube': CubeConnector,
-        'coinbase': CoinbaseConnector,
-        'hashkey': HashkeyConnector,
-        'htx': HTXConnector,
-        'okx': OKXConnector,
-        'bitmart': BitmartConnector
-    }
-    
-    DEX_MAPPING = {
-        'carbon': CarbonConnector,
-        'openocean': OpenOceanConnector,
-        'sushiswap': SushiswapConnector,
-        'tinyman': TinymanConnector,
-        'telos': TelosConnector,
-        'vvs': VVSConnector,
-        'xswap': XSwapConnector,
-        'pancakeswap': PancakeSwapConnector,
-        'curve': CurveConnector,
-        'balancer': BalancerConnector,
-        'etcswap': ETCSwapConnector
-    }
+    """Factory for creating multi-exchange connectors"""
     
     @staticmethod
-    def create_cex_connector(
+    def create_connector(
+        config_path: str = 'config/exchanges.yaml'
+    ) -> MultiExchangeConnector:
+        """
+        Create a multi-exchange connector
+        
+        Args:
+            config_path (str): Path to exchanges configuration file
+        
+        Returns:
+            MultiExchangeConnector: Initialized multi-exchange connector
+        """
+        return MultiExchangeConnector(config_path)
+    
+    @staticmethod
+    def create_web3_wallet(
         exchange: str,
         api_key: str,
-        api_secret: str
-    ) -> CLOBConnector:
-        """Create a CEX connector"""
-        if exchange not in ConnectorFactory.CEX_MAPPING:
-            raise ValueError(f"Unsupported CEX: {exchange}")
-        return ConnectorFactory.CEX_MAPPING[exchange](api_key, api_secret)
+        api_secret: str,
+        web3_api_key: str
+    ) -> Union[dict, None]:
+        """
+        Create a Web3 wallet using the specified exchange's API
         
+        Args:
+            exchange (str): Exchange name
+            api_key (str): CEX API key
+            api_secret (str): CEX API secret
+            web3_api_key (str): Web3 API key
+        
+        Returns:
+            Dict containing wallet creation details or None
+        """
+        try:
+            # Use MultiExchangeConnector to create wallet
+            connector = MultiExchangeConnector()
+            
+            # Placeholder for wallet creation method
+            # In a real implementation, this would use the specific exchange's Web3 API
+            wallet_details = {
+                'exchange': exchange,
+                'wallet_address': None,  # Would be populated by actual API call
+                'creation_timestamp': None
+            }
+            
+            return wallet_details
+        
+        except Exception as e:
+            print(f"Web3 wallet creation error: {e}")
+            return None
+    
     @staticmethod
-    def create_dex_connector(
-        dex: str,
-        rpc_url: str
-    ) -> AMMConnector:
-        """Create a DEX connector"""
-        if dex not in ConnectorFactory.DEX_MAPPING:
-            raise ValueError(f"Unsupported DEX: {dex}")
-        return ConnectorFactory.DEX_MAPPING[dex](rpc_url)
+    def get_supported_exchanges(
+        config_path: str = 'config/exchanges.yaml'
+    ) -> dict:
+        """
+        Retrieve supported exchanges from configuration
+        
+        Args:
+            config_path (str): Path to exchanges configuration file
+        
+        Returns:
+            Dict of supported CEX and DEX exchanges
+        """
+        try:
+            import yaml
+            
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            
+            return {
+                'cex': [ex['name'] for ex in config.get('cex_exchanges', [])],
+                'dex': [ex['name'] for ex in config.get('dex_exchanges', [])]
+            }
+        
+        except Exception as e:
+            print(f"Error reading exchange configuration: {e}")
+            return {'cex': [], 'dex': []}

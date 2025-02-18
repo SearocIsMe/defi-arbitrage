@@ -1,0 +1,47 @@
+cex_exchanges:
+  - name: okx
+    api_type: native
+    supported_markets:
+      - spot
+      - futures
+      - options
+  - name: binance
+    api_type: ccxt
+    supported_markets:
+      - spot
+      - futures
+      - margin
+  - name: coinbase
+    api_type: ccxt
+    supported_markets:
+      - spot
+      - pro
+
+dex_exchanges:
+  - name: uniswap
+    chain: ethereum
+    supported_versions:
+      - v2
+      - v3
+  - name: pancakeswap
+    chain: bsc
+    supported_versions:
+      - v2
+  - name: sushiswap
+    chain: multichain
+    supported_chains:
+      - ethereum
+      - polygon
+      - arbitrum
+
+cross_chain_bridges:
+  - name: hop_protocol
+    supported_chains:
+      - ethereum
+      - polygon
+      - optimism
+  - name: across_protocol
+    supported_chains:
+      - ethereum
+      - arbitrum
+      - optimism

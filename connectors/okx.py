@@ -1,118 +1,213 @@
-"""OKX CLOB Connector"""
-from typing import Dict, Optional
-from web3.types import TxReceipt
-from eth_typing import ChecksumAddress
+"""OKX Connector Implementation with Multi-Exchange Support"""
+import os
+import yaml
+import asyncio
+import ccxt
 import requests
-import hmac
-import hashlib
-import time
-from connectors.base_connector import CLOBConnector
+from typing import Dict, Any, Optional, List
+import importlib
 
-class OKXConnector(CLOBConnector):
-    """OKX CLOB connector implementation"""
+class MultiExchangeConnector:
+    """
+    Multi-exchange connector with support for CEX and DEX markets
     
-    def __init__(self, chain: str, rpc_url: str, router_address: str, factory_address: str):
-        self.chain = chain
-        self.rpc_url = rpc_url
-        self.router_address = router_address
-        self.factory_address = factory_address
-        self.base_url = "https://www.okx.com/api/v5"
-        self.api_key = "YOUR_API_KEY"
-        self.api_secret = "YOUR_API_SECRET"
-        self.passphrase = "YOUR_PASSPHRASE"
+    Supports different API types:
+    - Native (direct API integration)
+    - CCXT (standardized exchange library)
+    - Web3 (blockchain-based exchanges)
+    """
+    
+    def __init__(self, config_path: str = 'config/exchanges.yaml'):
+        """
+        Initialize multi-exchange connector
         
-    def _generate_signature(self, timestamp, method, request_path, body=""):
-        message = timestamp + method + request_path + body
-        mac = hmac.new(bytes(self.api_secret, 'utf-8'), bytes(message, 'utf-8'), hashlib.sha256)
-        return mac.hexdigest()
+        Args:
+            config_path (str): Path to exchanges configuration file
+        """
+        self.config = self._load_config(config_path)
+        self.exchanges = {}
+        self._initialize_exchanges()
     
-    def _make_request(self, method, endpoint, params=None):
-        timestamp = str(int(time.time() * 1000))
-        signature = self._generate_signature(timestamp, method.upper(), endpoint, str(params) if params else "")
-        headers = {
-            "OK-ACCESS-KEY": self.api_key,
-            "OK-ACCESS-SIGN": signature,
-            "OK-ACCESS-TIMESTAMP": timestamp,
-            "OK-ACCESS-PASSPHRASE": self.passphrase,
-            "Content-Type": "application/json"
-        }
-        response = requests.request(method, f"{self.base_url}{endpoint}", headers=headers, json=params)
-        response.raise_for_status()
-        return response.json()["data"]
-    
-    def get_name(self) -> str:
-        return "OKX"
-    
-    def get_chain(self) -> str:
-        return self.chain
-    
-    def get_available_markets(self) -> Dict[str, Dict]:
-        """Fetch available trading markets from OKX"""
+    def _load_config(self, config_path: str) -> Dict[str, Any]:
+        """
+        Load exchange configuration from YAML file
+        
+        Args:
+            config_path (str): Path to configuration file
+        
+        Returns:
+            Dict containing exchange configurations
+        """
         try:
-            markets = self._make_request("GET", "/public/instruments", {"instType": "SPOT"})
-            return {
-                market["instId"]: {
-                    "base_asset": market["baseCcy"],
-                    "quote_asset": market["quoteCcy"],
-                    "min_price": float(market["tickSz"]),
-                    "max_price": float(market["tickSz"]),
-                    "min_amount": float(market["lotSz"]),
-                    "max_amount": float(market["lotSz"]),
-                }
-                for market in markets
-            }
+            with open(config_path, 'r') as f:
+                return yaml.safe_load(f)
         except Exception as e:
-            raise Exception(f"Failed to fetch markets: {str(e)}")
+            print(f"Error loading exchange configuration: {e}")
+            return {'cex_exchanges': [], 'dex_exchanges': []}
     
-    def get_balances(self, wallet_address: ChecksumAddress) -> Dict[str, float]:
-        """Fetch account balances from OKX"""
-        try:
-            balances = self._make_request("GET", "/account/balance", {"ccy": "ALL"})
-            return {
-                balance["ccy"]: float(balance["availBal"])
-                for balance in balances[0]["details"]
-            }
-        except Exception as e:
-            raise Exception(f"Failed to fetch balances: {str(e)}")
+    def _initialize_exchanges(self):
+        """
+        Initialize supported exchanges based on configuration
+        """
+        # Initialize CEX exchanges
+        for exchange_config in self.config.get('cex_exchanges', []):
+            try:
+                self._initialize_cex_exchange(exchange_config)
+            except Exception as e:
+                print(f"Error initializing CEX {exchange_config['name']}: {e}")
+        
+        # Initialize DEX exchanges
+        for exchange_config in self.config.get('dex_exchanges', []):
+            try:
+                self._initialize_dex_exchange(exchange_config)
+            except Exception as e:
+                print(f"Error initializing DEX {exchange_config['name']}: {e}")
     
-    def get_order_book(self, market: str) -> Dict:
-        """Fetch order book for a specific market"""
-        try:
-            order_book = self._make_request("GET", "/market/books", {"instId": market, "sz": "400"})
-            return {
-                "bids": [[float(price), float(amount)] for price, amount in order_book[0]["bids"]],
-                "asks": [[float(price), float(amount)] for price, amount in order_book[0]["asks"]],
-            }
-        except Exception as e:
-            raise Exception(f"Failed to fetch order book: {str(e)}")
-    
-    def place_limit_order(
-        self,
-        market: str,
-        side: str,
-        price: float,
-        amount: float,
-        wallet_address: ChecksumAddress
-    ) -> str:
-        """Place a limit order on OKX"""
-        try:
-            order = self._make_request("POST", "/trade/order", {
-                "instId": market,
-                "tdMode": "cash",
-                "side": side.lower(),
-                "ordType": "limit",
-                "px": str(price),
-                "sz": str(amount),
-                "ccy": market.split("-")[0]
+    def _initialize_cex_exchange(self, exchange_config: Dict[str, Any]):
+        """
+        Initialize a CEX exchange connector
+        
+        Args:
+            exchange_config (Dict): Configuration for the exchange
+        """
+        exchange_name = exchange_config['name']
+        api_type = exchange_config.get('api_type', 'ccxt')
+        
+        # Retrieve API credentials from environment
+        api_key = os.getenv(f"{exchange_name.upper()}_API_KEY")
+        api_secret = os.getenv(f"{exchange_name.upper()}_SECRET_KEY")
+        
+        if not (api_key and api_secret):
+            print(f"Skipping {exchange_name}: Missing API credentials")
+            return
+        
+        if api_type == 'ccxt':
+            # Use CCXT for standardized exchange integration
+            exchange_class = getattr(ccxt, exchange_name)
+            exchange = exchange_class({
+                'apiKey': api_key,
+                'secret': api_secret,
+                'enableRateLimit': True
             })
-            return order[0]["ordId"]
-        except Exception as e:
-            raise Exception(f"Failed to place order: {str(e)}")
+            self.exchanges[exchange_name] = exchange
+        elif api_type == 'native':
+            # Use native API for specific exchanges (like OKX)
+            if exchange_name == 'okx':
+                from connectors.base_cex_connector import BaseCEXConnector
+                exchange = BaseCEXConnector(exchange_name, api_key, api_secret)
+                self.exchanges[exchange_name] = exchange
     
-    def cancel_order(self, order_id: str) -> bool:
-        """Cancel an order on OKX"""
+    def _initialize_dex_exchange(self, exchange_config: Dict[str, Any]):
+        """
+        Initialize a DEX exchange connector
+        
+        Args:
+            exchange_config (Dict): Configuration for the DEX exchange
+        """
+        exchange_name = exchange_config['name']
+        chain = exchange_config.get('chain', 'ethereum')
+        
+        # Retrieve RPC URL from environment or chain configuration
+        rpc_url = os.getenv(f"{chain.upper()}_RPC_URL", 'http://localhost:8545')
+        
+        # Use Web3 for DEX initialization
         try:
-            self._make_request("POST", "/trade/cancel-order", {"ordId": order_id})
-            return True
+            from web3 import Web3
+            w3 = Web3(Web3.HTTPProvider(rpc_url))
+            
+            # Placeholder for DEX-specific initialization
+            # In a real implementation, you'd use specific DEX contract ABIs
+            self.exchanges[f"{exchange_name}_{chain}"] = {
+                'web3': w3,
+                'chain': chain,
+                'name': exchange_name
+            }
         except Exception as e:
-            raise Exception(f"Failed to cancel order: {str(e)}")
+            print(f"Error initializing DEX {exchange_name} on {chain}: {e}")
+    
+    async def fetch_top_trading_pairs(self, limit: int = 50) -> Dict[str, Dict[str, Any]]:
+        """
+        Fetch top trading pairs across all initialized exchanges
+        
+        Args:
+            limit (int): Number of top pairs to fetch
+        
+        Returns:
+            Dict of top trading pairs from different exchanges
+        """
+        top_pairs = {}
+        
+        for exchange_name, exchange in self.exchanges.items():
+            try:
+                if hasattr(exchange, 'fetch_tickers'):
+                    # CCXT-style exchanges
+                    tickers = await exchange.fetch_tickers()
+                    sorted_pairs = sorted(
+                        tickers.items(), 
+                        key=lambda x: float(x[1].get('quoteVolume', 0) or 0), 
+                        reverse=True
+                    )[:limit]
+                    
+                    top_pairs[exchange_name] = {
+                        pair: {
+                            'volume': ticker.get('quoteVolume', 0),
+                            'last_price': ticker.get('last', 0)
+                        } 
+                        for pair, ticker in sorted_pairs
+                    }
+                elif isinstance(exchange, dict) and 'web3' in exchange:
+                    # DEX placeholder (would need actual implementation)
+                    top_pairs[exchange_name] = self._fetch_dex_pairs(exchange, limit)
+            except Exception as e:
+                print(f"Error fetching pairs from {exchange_name}: {e}")
+        
+        return top_pairs
+    
+    def _fetch_dex_pairs(self, dex_info: Dict[str, Any], limit: int) -> Dict[str, Dict[str, float]]:
+        """
+        Placeholder method for fetching DEX trading pairs
+        
+        Args:
+            dex_info (Dict): DEX exchange information
+            limit (int): Number of pairs to fetch
+        
+        Returns:
+            Dict of top DEX trading pairs
+        """
+        # Placeholder implementation
+        return {
+            'ETH/USDT': {'volume': 1000000, 'last_price': 2000},
+            'WBTC/USDT': {'volume': 500000, 'last_price': 40000}
+        }
+    
+    async def calculate_momentum(self, symbol: str, period: int = 14) -> Optional[float]:
+        """
+        Calculate trading pair momentum across exchanges
+        
+        Args:
+            symbol (str): Trading pair symbol
+            period (int): Number of historical periods to analyze
+        
+        Returns:
+            Optional momentum value
+        """
+        momentums = {}
+        
+        for exchange_name, exchange in self.exchanges.items():
+            try:
+                if hasattr(exchange, 'fetch_ohlcv'):
+                    historical_data = await exchange.fetch_ohlcv(symbol, '1d', limit=period)
+                    
+                    price_changes = [
+                        (historical_data[i][4] - historical_data[i-1][4]) / historical_data[i-1][4] 
+                        for i in range(1, len(historical_data))
+                    ]
+                    
+                    momentum = sum(price_changes) / len(price_changes) if price_changes else None
+                    momentums[exchange_name] = momentum
+            except Exception as e:
+                print(f"Momentum calculation error for {symbol} on {exchange_name}: {e}")
+        
+        # Return average momentum across exchanges
+        valid_momentums = [m for m in momentums.values() if m is not None]
+        return sum(valid_momentums) / len(valid_momentums) if valid_momentums else None
