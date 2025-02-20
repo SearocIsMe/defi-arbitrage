@@ -1,10 +1,9 @@
 import asyncio
-import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Optional
 from decimal import Decimal
 
 from web3 import Web3
-from web3.middleware import geth_poa_middleware
+from web3.middleware import ExtraDataToPOAMiddleware
 
 from logger_config import get_logger
 from error_handler import ErrorHandler, ArbitrageError, ErrorSeverity
@@ -62,7 +61,7 @@ class GasManager:
             w3 (Web3): Web3 instance for blockchain interactions
         """
         # Add POA middleware for networks like BSC
-        w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+        w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
         
         self.w3 = w3
         self.logger = get_logger('gas_manager')

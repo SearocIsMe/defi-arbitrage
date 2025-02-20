@@ -1,17 +1,13 @@
 import os
-import asyncio
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from datetime import datetime
 
-import aiohttp
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import prometheus_client
 
 from logger_config import get_logger
-from error_handler import ErrorHandler, ArbitrageError
-from config_manager import config
 
 # Prometheus Metrics
 ARBITRAGE_OPPORTUNITIES = prometheus_client.Counter(

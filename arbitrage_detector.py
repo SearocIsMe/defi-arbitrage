@@ -1,24 +1,20 @@
 import os
 import asyncio
-import random
-import json
 from datetime import datetime
-from decimal import Decimal
 
 # Add dotenv for environment variable management
 from dotenv import load_dotenv
 load_dotenv()
 
 # Import external libraries
-import ccxt
 from web3 import Web3
 
 # Import local modules
 from logger_config import get_logger
 from api_service import store_arbitrage_opportunity, store_top_trading_pairs
 from chain_config import CHAIN_CONFIG, validate_chain_config
-from multi_source_gas_manager import GasManager
-from fund_manager import FundManager, Position
+from gas_manager import GasManager
+from fund_manager import FundManager
 from connectors.connector_factory import ConnectorFactory
 
 # Import logging
@@ -37,13 +33,13 @@ class ArbitrageDetector:
         
         self.wallet_address = wallet_address
         self.w3 = self._initialize_web3()
-        self.gas_manager = GasManager()
+        self.gas_manager = GasManager(self.w3)
         self.fund_manager = FundManager(self.w3, self.gas_manager)
         
         # Initialize multi-exchange connector
         self.multi_exchange_connector = self._initialize_multi_exchange_connector()
         
-        # Configuration parameters
+        # Configuration parametersCould not establish Web3 connection to any provider
         self.min_arbitrage_profit = float(os.getenv('MIN_ARBITRAGE_PROFIT', 0.5))
         self.max_pairs_to_track = int(os.getenv('MAX_PAIRS_TO_TRACK', 50))
         
@@ -88,7 +84,7 @@ class ArbitrageDetector:
         provider_urls = [web3_provider_url]
         
         # Add fallback RPC URLs from chain configuration
-        for chain_name, chain_config in CHAIN_CONFIG.items():
+        for chain_config in CHAIN_CONFIG.items():
             if 'rpc_url' in chain_config:
                 provider_urls.append(chain_config['rpc_url'])
         

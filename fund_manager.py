@@ -1,10 +1,9 @@
-import os
+
 import asyncio
 from decimal import Decimal
 from typing import Dict, Any, Optional, List, Union
 
 from web3 import Web3
-from web3.contract import Contract
 
 from logger_config import get_logger
 from error_handler import ErrorHandler, ArbitrageError, ErrorSeverity

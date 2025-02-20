@@ -28,6 +28,7 @@ env/
 .venv
 ENV/
 
+
 # IDE and Editor Files
 .idea/
 .vscode/
@@ -41,7 +42,7 @@ ENV/
 *.sqlite3
 logs/
 *.db
-
+.env.example
 # Secrets and Sensitive Information
 *.key
 *.pem
@@ -152,3 +153,6 @@ htmlcov/
 *.arbitrage_cache
 *.trade_history
 *.performance_log
+
+# intermidate files for debugging
+trading_pairs/

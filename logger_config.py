@@ -2,7 +2,6 @@ import os
 import logging
 import structlog
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
-from datetime import datetime
 import sys
 
 def configure_logging(log_level=None):

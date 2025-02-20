@@ -1,4 +1,3 @@
-import sys
 import traceback
 from typing import Optional, Any, Dict
 import logging

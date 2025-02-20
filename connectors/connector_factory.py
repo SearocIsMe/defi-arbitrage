@@ -1,5 +1,5 @@
 """Connector Factory Implementation with Multi-Exchange Support"""
-from typing import Union, Optional
+from typing import Union
 from connectors.multi_exchange_connector import MultiExchangeConnector
 
 class ConnectorFactory:

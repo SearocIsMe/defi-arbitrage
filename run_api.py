@@ -2,7 +2,7 @@ import os
 import sys
 import asyncio
 import argparse
-from typing import Optional
+
 
 # Add project root to Python path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
