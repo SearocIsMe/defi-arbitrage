@@ -3,7 +3,7 @@ import os
 import json
 import yaml
 import jsonschema
-from decimal import Decimal
+
 
 class ChainConfigurationError(Exception):
     """Custom exception for chain configuration errors"""
